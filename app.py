@@ -1,21 +1,37 @@
 import os
-import cv2
-import gradio as gr
-from ultralytics import YOLO
+from pathlib import Path
 import time
 from datetime import datetime
-import subprocess
-import threading
-from ffmpeg import FFmpeg
+import logging
 
-# --- Settings ---
-MAX_LOG_LINES = 1000
-YOLO_SIZE = (608, 416)
-RENDER_SIZE = (int(YOLO_SIZE[0]/2), int(YOLO_SIZE[1]/2))  # for better visibility in UI
-MOTION_FRAME_COUNT = 2
-TAIL_FRAME_COUNT = 8
-CONFIDENCE_THRESHOLD = 0.4
-MOTION_THRESHOLD = 500
+import cv2
+import torch
+import gradio as gr
+from ultralytics import YOLO
+
+from logger import setup_logging, log_event, event_log
+from nvr import get_segments, merge_segments, cleanup_segments, start_segment_recorders
+from constants import (
+    RECORDINGS_DIR,
+    IMAGES_DIR,
+    SEGMENTS_DIR,
+    TAIL_FRAME_COUNT,
+    MOTION_FRAME_COUNT,
+    PRE_RECORD,
+    REQUIRE_OBJECT_FOR_RECORDING,
+    EVENT_COOLDOWN,
+    YOLO_SIZE,
+    MOTION_THRESHOLD,
+    CONFIDENCE_THRESHOLD,
+    RENDER_SIZE,
+
+)
+from cameras import CAMERAS
+
+logger = logging.getLogger("yolo-rtsp-security-cam")
+setup_logging("logging-config.json")
+
+start_segment_recorders(CAMERAS)
 
 LOG_STREAM_DIV = """
     <div class="inner-log" style="
@@ -23,331 +39,322 @@ LOG_STREAM_DIV = """
         overflow-y: auto; 
         border: 1px solid #ccc; 
         padding: 5px; 
-        font-family: monospace; 
+        font-family: monospace;
+        font-size: small;
         background-color: #1e1e1e; 
         color: #ffffff;
         box-sizing: border-box;
     ">
-    <div style="font-weight: bold; margin-bottom: 8px; font-size: 16px;">
+    <div style="font-weight: bold; margin-bottom: 8px; font-size: small;">
         📜 Event Log
     </div>
     """
 
-RECORDINGS_DIR = "recordings"
-os.makedirs(RECORDINGS_DIR, exist_ok=True)
-
-RTSP_ENTRIES = [
-    ("Shed", f"rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=1&subtype=1"),
-    ("B56Lot", f"rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=2&subtype=1"),
-    ("B5Lot", f"rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=3&subtype=1"),
-    ("Pool", f"rtsp://admin:Portside123!!!@pool.portsidecondominium.com:554/cam/realmonitor?channel=1&subtype=1"),
-    ("PoolEntry", f"rtsp://admin:Portside123!!!@pool.portsidecondominium.com:554/cam/realmonitor?channel=2&subtype=1")
-]
-# Tracks live HD mode per camera
-hd_mode_states = {name: False for name, _ in RTSP_ENTRIES}
-
-# Load YOLO
+# =========================
+# GLOBAL STATE
+# =========================
 model = YOLO("yolov8n.pt")
-CLASSES_OF_INTEREST = ["person", "car", "bicycle", "motorcycle", "bus", "truck", "cat", "dog"]
+
+CLASSES_OF_INTEREST = ["person","car","bicycle","motorcycle","bus","truck","cat","dog"]
 CLASS_TO_IDX = {v: k for k, v in model.names.items()}
-INTERESTED_CLASSES = [CLASS_TO_IDX[i] for i in CLASSES_OF_INTEREST]
-selected_classes = INTERESTED_CLASSES.copy()
+selected_classes = [CLASS_TO_IDX[i] for i in CLASSES_OF_INTEREST]
 
-# Persistent storage
-event_log = []
-recorded_files = []  # store gr.File components for download
+hd_mode_states = {name: False for name, _ in CAMERAS}
+active_events = {}
+active_objects = {}
+last_event_time = {}
 
-# --- Logging ---
-def log_event(message, level="info", camera="", file_path=None):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    colors = {"info": "#00c853", "warn": "#ffd600", "error": "#ff5252", "record": "#ff1744"}
-    color = colors.get(level, "#ffffff")
-
-    prefix = f"{camera:<9}" if camera else ""
-
-    # Make recording file clickable
-    if file_path and os.path.isfile(file_path):
-        filename = os.path.basename(file_path)
-        link = f'<a href="/gradio_api/file={file_path}" target="_blank" style="color:#40c4ff;">{filename}</a>'
-        message = f"{message} {link}"
-
-    entry = f'<div style="color:{color}; font-family:monospace;">[{timestamp}] {level.upper():<8}: {prefix}{message}</div>'
-    event_log.append(entry)
-
-    if len(event_log) > MAX_LOG_LINES:
-        event_log.pop(0)
-
-# --- Confidence slider handler ---
-def update_conf(val):
+# =========================
+# UI HANDLERS
+# =========================
+def update_confidence_threshold(val):
     global CONFIDENCE_THRESHOLD
-    log_event(f"Confidence threshold updated from {CONFIDENCE_THRESHOLD} to {val}", "info")
     CONFIDENCE_THRESHOLD = val
+    log_event(f"Confidence updated → {val}")
 
-# --- Motion factor slider handler ---
-def update_motion_factor(val):
+def update_motion_threshold(val):
     global MOTION_THRESHOLD
-    log_event(f"Motion factor updated from {MOTION_THRESHOLD} to {val}", "info")
     MOTION_THRESHOLD = val
+    log_event(f"Motion threshold → {val}")
 
-# --- Class selection handler ---
-def update_classes(selected_names):
+def update_detection_classes(names):
     global selected_classes
+    selected_classes = [CLASS_TO_IDX[n] for n in names] if names else []
+    log_event(f"Classes → {names}")
 
-    if not selected_names:
-        selected_classes = []  # detect nothing
-        log_event("No classes selected", "warn")
-        return
+def update_hd_mode(cam, val):
+    hd_mode_states[cam] = val
 
-    selected_classes = [CLASS_TO_IDX[name] for name in selected_names]
-    log_event(f"Classes updated: {', '.join(selected_names)}", "info")
 
-# --- HD Mode toggle handler ---
-def update_hd_mode(camera_name, hd_value):
-    global hd_mode_states
-    hd_mode_states[camera_name] = hd_value
-    log_event(f"HD Mode {'enabled' if hd_value else 'disabled'}", camera=camera_name)
-
-# --- Event log streamer ---
-def log_stream():
-    while True:
-        html_content = "".join(event_log)
-        # JS snippet to scroll to bottom
-        scroll_js = "<script>var el=document.currentScript.parentElement; el.scrollTop=el.scrollHeight;</script>"
-        yield LOG_STREAM_DIV +html_content + scroll_js + "</div>"
-        time.sleep(0.5)
-
-# --- Recordings streamer ---
-def recordings_stream():
-    while True:
-        files = []
-        if os.path.exists(RECORDINGS_DIR):
-            # Get full paths
-            files = [
-                os.path.join(RECORDINGS_DIR, f)
-                for f in os.listdir(RECORDINGS_DIR)
-                if f.endswith(".mp4")
-            ]
-        # Sort by modification time (newest first)
-        files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-
-        file_links = ""
-        for full_path in files:
-            filename = os.path.basename(full_path)
-            link = f'<a href="/gradio_api/file={full_path}" target="_blank" style="color:#40c4ff;">{filename}</a>'
-            file_links += f"{link}<br>"
-
-        yield f"""
-        <div style="
-            height: 200px;
-            overflow-y: auto;
-            border: 1px solid #ccc;
-            padding: 5px;
-            font-family: monospace;
-            background-color: #1e1e1e;
-            color: #ffffff;
-            box-sizing: border-box;
-        ">
-            <div style="font-weight: bold; margin-bottom: 8px; font-size: 16px;">
-                🎥 Recordings
-            </div>
-            {file_links}
-        </div>
-        """
-        time.sleep(2)
-
-# --- FFmpeg recording thread ---
-def start_ffmpeg(ffmpeg_copy, cam_id):
-    try:
-        ffmpeg_copy.execute()
-    except:
-        log_event(f"Issue recording the stream. Trying again.", "error", cam_id)
-        time.sleep(1)
-        ffmpeg_copy.execute()
-
-def start_ffmpeg_recording(rtsp_url, filename, cam_id, stop_event):
+def keep_overlapping_any(boxes, ref_boxes):
     """
-    Runs FFmpeg in a thread and stops when stop_event is set.
+    boxes: YOLO r.boxes.xyxy  -> (N, 4)
+    ref_boxes: cv2.boundingRect -> (M, 4) in (x, y, x1, y1)
     """
-    ffmpeg_copy = (
-            FFmpeg()
-            .option("y")
-            .input(
-                rtsp_url,
-                rtsp_transport="tcp",
-                rtsp_flags="prefer_tcp",
-            )
-            .output(filename, vcodec="copy", acodec="copy")
-        )
 
-    ffmpeg_thread = threading.Thread(target=start_ffmpeg, args=(ffmpeg_copy, cam_id), daemon=True)
-    ffmpeg_thread.start()
+    # 1. Ensure correct shapes
+    boxes = boxes.view(-1, 4)
+    ref_boxes = ref_boxes.view(-1, 4)
 
-    # Wait until stop signal
-    stop_event.wait()
+    # 3. Compute pairwise intersection
+    x1 = torch.maximum(boxes[:, None, 0], ref_boxes[None, :, 0])
+    y1 = torch.maximum(boxes[:, None, 1], ref_boxes[None, :, 1])
+    x2 = torch.minimum(boxes[:, None, 2], ref_boxes[None, :, 2])
+    y2 = torch.minimum(boxes[:, None, 3], ref_boxes[None, :, 3])
 
-    # Stop FFmpeg cleanly
-    ffmpeg_copy.terminate()
-    try:
-        ffmpeg_thread.join(timeout=5)
-    except Exception as e:
-        log_event(f"Exception {e} waiting for recording thread.", "error", cam_id)
+    inter_w = (x2 - x1).clamp(min=0)
+    inter_h = (y2 - y1).clamp(min=0)
 
-# --- Camera stream ---
+    overlap = (inter_w * inter_h) > 0  # (N, M)
+
+    # 4. Keep if overlaps ANY ROI
+    return overlap.any(dim=1)
+
+# =========================
+# STREAM
+# =========================
 def make_stream_fn(cam_id, rtsp_url):
-    async def stream():
+    def stream():
         cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
-        #cap.set(cv2.CAP_PROP_PROTOCOL, 'udp') 
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Set buffer size to 1 frame
+        cam_res = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        cam_fps = cap.get(cv2.CAP_PROP_FPS) or 20.0
+        cam_fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+        codec = "".join([chr((cam_fourcc >> 8 * i) & 0xFF) for i in range(4)])
 
         if not cap.isOpened():
             log_event("Failed to open stream", "error", cam_id)
             raise gr.Error(f"Failed to open stream: {rtsp_url}")
 
-        prev_gray = None
-        motion_counter = 0
-        no_motion_counter = 0
-        recording = False
-        filename = None
-        ffmpeg_thread = None
-        stop_event = None
-        prev_time = time.time()
-        cam_fps = cap.get(cv2.CAP_PROP_FPS) or 20
-        resolution = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        log_event(f"Stream opened with resolution {cam_res} {cam_fps:.1f}fps codec:{codec}", "info", cam_id)
 
-        log_event(f"Stream opened with resolution {resolution} {cam_fps:.1f}fps", "info", cam_id)
+        prev_gray = None
+        motion_frames = 0
+        no_motion_frames = 0
+        recording = False
+        prev_time = time.time()
 
         while True:
             ret, frame = cap.read()
             if not ret:
                 log_event("Stream read failed, attempting to reconnect...", "warn", cam_id)
                 cap.release()
-                time.sleep(5)
-                cap = cv2.VideoCapture(rtsp_url, cv2.CAP_FFMPEG)
+                time.sleep(2)
+                cap = cv2.VideoCapture(rtsp_url)
                 continue
 
-            resized = cv2.resize(frame, YOLO_SIZE)
+            small = cv2.resize(frame, YOLO_SIZE)
 
-            # YOLO detection
-            results = model.predict(resized, classes=selected_classes if selected_classes else None, conf=CONFIDENCE_THRESHOLD, verbose=False)[0]
-            annotated = results.plot()
-            det_count = len(results.boxes) if results.boxes is not None else 0
+            # motion
+            gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY),(21,21),0)
+            motion_boxes = []
+            overlay = None
 
-            object_classes_in_frame = []
-            for data in results.boxes.data.tolist():
-                # Get the bounding box coordinates, confidence, and class id
-                _xmin, _ymin, _xmax, _ymax, confidence, class_id = data
-                object_name = model.names[int(class_id)]
-                if object_name not in object_classes_in_frame:
-                    object_classes_in_frame.append(object_name)
-                        
-            # Motion detection
-            gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray, (21, 21), 0)
-            motion_detected = False
             if prev_gray is not None:
-                frame_diff = cv2.absdiff(prev_gray, gray)
-                thresh = cv2.threshold(frame_diff, 25, 255, cv2.THRESH_BINARY)[1]
-                motion_score = cv2.countNonZero(thresh)
-                #log_event(f"Motion score: {motion_score} {('with detected' + ', '.join(object_classes_in_frame)) if object_classes_in_frame else ''}", "info", cam_id)
-                if motion_score > MOTION_THRESHOLD:
-                    motion_detected = True
-                    log_event(f"Motion detected (score: {motion_score}){(' with detected ' + ', '.join(object_classes_in_frame)) if object_classes_in_frame else ''}", "warn", cam_id)
+                diff = cv2.absdiff(prev_gray, gray)
+                thresh = cv2.threshold(diff,25,255,cv2.THRESH_BINARY)[1]
+                score = cv2.countNonZero(thresh)
+
+                if score > MOTION_THRESHOLD:
+                    #log_event(f"Motion detected (score: {score})", "info", cam_id)                    
+                    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    overlay = small.copy()
+                    for contour in contours:
+                        area = cv2.contourArea(contour)
+                        x1, y1, w, h = cv2.boundingRect(contour)
+                        x2 = x1 + w
+                        y2 = y1 + h
+                        if area < MOTION_THRESHOLD / 10:  # filter small noise
+                            cv2.drawContours(overlay, [contour], -1, (0, 0, 255), 1)
+                            cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), 1)
+                            #log_event(f"ignoring motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
+                        else:
+                            cv2.drawContours(overlay, [contour], -1, (0, 255, 0), 1)
+                            cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 1)
+                            #log_event(f"motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
+                            motion_boxes.append([x1, y1, x2, y2])
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        tag = "_".join(classes_in_frame) if classes_in_frame else "motion"
+                        img_dir = os.path.join(IMAGES_DIR, cam_id)
+                        image_filename = os.path.join(img_dir, f"{timestamp}_{tag}.jpg")
+                        cv2.imwrite(image_filename, overlay)
+
             prev_gray = gray
 
-            if motion_detected:
-                motion_counter += 1
-                no_motion_counter = 0
+            # YOLO
+            result = None
+            classes_in_frame = set()
+
+            if motion_boxes:
+                result = model.predict(small, conf=CONFIDENCE_THRESHOLD, classes=selected_classes if selected_classes else None, verbose=False)[0]
+                boxes = result.boxes.xyxy.reshape(-1, 4)
+                ref_motion_boxes = torch.as_tensor(motion_boxes, dtype=boxes.dtype, device=boxes.device)
+                keep = keep_overlapping_any(boxes, ref_motion_boxes)
+                #log_event(f"motion_boxes {ref_motion_boxes.shape} {ref_motion_boxes}")
+                #log_event(f"boxes {boxes.shape} {boxes}")
+                #log_event(f"keep {keep.shape} {keep}")
+                boxes = result.boxes[keep]
+
+                for box in boxes:
+                    classes_in_frame.add(model.names[int(box.cls)])
+
+            # counters
+            if motion_boxes:
+                motion_frames += 1
+                no_motion_frames = 0
             else:
-                no_motion_counter += 1
+                no_motion_frames += 1
 
-            # Start recording
-            if motion_counter >= MOTION_FRAME_COUNT and not recording:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = os.path.join(RECORDINGS_DIR, f"{cam_id}_{timestamp}_{motion_score}{('_' + '_'.join(object_classes_in_frame)) if object_classes_in_frame else ''}.mp4")
-                stop_event = threading.Event()
+            valid_objects = len(classes_in_frame) > 0
+            #if valid_objects:
+            #    log_event(f"Object classes detected: {', '.join(classes_in_frame)}", "info", cam_id)
 
-                ffmpeg_thread = threading.Thread(
-                    target=start_ffmpeg_recording,
-                    args=(rtsp_url, filename, cam_id, stop_event),
-                    daemon=True
-                )
-                ffmpeg_thread.start()
-                recording = True
-                log_event(f"Recording started {os.path.basename(filename)}", "record", cam_id)
+            # start
+            now = time.time()
+            if motion_frames >= MOTION_FRAME_COUNT and not recording:
+                if (not REQUIRE_OBJECT_FOR_RECORDING or valid_objects):
+                    if now - last_event_time.get(cam_id,0) > EVENT_COOLDOWN:
+                        recording = True
+                        active_events[cam_id] = get_segments(cam_id, PRE_RECORD)
+                        active_objects[cam_id] = set(classes_in_frame)
+                        last_event_time[cam_id] = now
+                        log_event(f"Recording start {list(classes_in_frame)}", "record", cam_id)
 
-            # Stop recording
-            if recording and no_motion_counter >= TAIL_FRAME_COUNT:
+            # update
+            if recording:
+                active_events[cam_id] += get_segments(cam_id,1)
+                active_objects[cam_id].update(classes_in_frame)
+
+            # stop
+            if recording and no_motion_frames >= TAIL_FRAME_COUNT:
                 recording = False
-                motion_counter = 0
-                no_motion_counter = 0
-                if stop_event:
-                    stop_event.set()
+                segments = list(dict.fromkeys(active_events.get(cam_id,[])))
+                active_events.pop(cam_id, None)
+                classes_in_frame = active_objects.pop(cam_id)
 
-                if ffmpeg_thread:
-                    ffmpeg_thread.join(timeout=5)
-                log_event(f"Recording stopped {os.path.basename(filename)}", "record", cam_id)
+                if segments:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    tag = "_".join(classes_in_frame) if classes_in_frame else "motion"
 
-                recorded_file = cv2.VideoCapture(filename)
-                recorded_frames = recorded_file.get(cv2.CAP_PROP_FRAME_COUNT)
-                if recorded_frames < TAIL_FRAME_COUNT + cam_fps and os.path.isfile(filename):
-                    os.remove(filename)
-                    log_event(f"Auto-deleted {os.path.basename(filename)} with {recorded_frames} frames", "record", cam_id, file_path=filename)
-                else:
-                    log_event(f"Recording available {os.path.basename(filename)}", "record", cam_id, file_path=filename)
+                    cam_dir = os.path.join(RECORDINGS_DIR, cam_id)
 
-            # FPS stats
-            fps = 1.0 / (time.time() - prev_time)
+                    recording_filename = os.path.join(cam_dir, f"{timestamp}_{tag}.mp4")
+                    merge_segments(segments, recording_filename)
+
+                    recorded_cap = cv2.VideoCapture(recording_filename)
+                    frame_count = recorded_cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                    if frame_count < TAIL_FRAME_COUNT + cam_fps and os.path.isfile(recording_filename):
+                        os.remove(recording_filename)
+                        log_event(f"Recording auto-deleted {os.path.basename(recording_filename)} with {frame_count} frames", "record", cam_id, file_path=recording_filename)
+                    else:
+                        log_event(f"Recording available {os.path.basename(recording_filename)}", "record", cam_id, file_path=recording_filename)
+
+                motion_frames = 0
+                no_motion_frames = 0
+
+            # render
+            img = result.plot() if result else small
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            if overlay is not None:
+                img = cv2.addWeighted(img, 0.7, overlay, 0.3, 0)
+
+            if not hd_mode_states[cam_id]:
+                img = cv2.resize(img, RENDER_SIZE)
+
+            fps = 1/(time.time()-prev_time)
             prev_time = time.time()
-            stats_text = f"FPS: {fps:.1f} | Detections: {det_count}"
 
-            annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-            hd_mode = hd_mode_states.get(cam_id, False)
-            if not hd_mode:
-                annotated = cv2.resize(annotated, RENDER_SIZE)
-            else:
-                pass
-            yield annotated, stats_text
+            status = "🔴 REC" if recording else "🟢 LIVE"
+            yield img, f"{status} | {cam_res[0]}x{cam_res[1]} | FPS {int(fps)}" + (f" | {len(classes_in_frame)} objects" if len(classes_in_frame) > 0 else "")
 
     return stream
 
-# --- Build UI ---
+# =========================
+# UI STREAMS
+# =========================
+# --- Event log streamer ---
+def log_stream():
+    while True:
+        html_content = "".join(event_log)
+        # JS snippet to scroll to bottom
+        scroll_js = "<script>var el=document.currentScript.parentElement; el.scrollTop=el.scrollHeight;</script>"
+        yield LOG_STREAM_DIV +html_content + "</div>" + scroll_js
+        time.sleep(0.5)
+
+def recordings_stream():
+    while True:
+        files=[]
+        for r,_,f in os.walk(RECORDINGS_DIR):
+            for x in f:
+                if x.endswith(".mp4"):
+                    files.append(os.path.join(r,x))
+
+        files.sort(key=os.path.getmtime, reverse=True)
+
+        html="""
+        <div style="
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 5px;
+            font-family: monospace;
+            font-size: small;
+            background-color: #1e1e1e;
+            color: #ffffff;
+            box-sizing: border-box;
+        ">
+            <div style="font-weight: bold; margin-bottom: 8px; font-size: medium;">
+                🎥 Recordings
+            </div>
+        """
+        for f in files:
+            p = Path(f)
+            html+=f'<a href="/gradio_api/file={f}" target="_blank" style="color: white;">{p.parent.name}/{p.name}</a><br>'
+        html+="</div>"
+
+        yield html
+        time.sleep(2)
+
+
+
+# =========================
+# BUILD UI (RESTORED)
+# =========================
 with gr.Blocks() as demo:
     gr.Markdown("## Portside Condominiums Security Cam Viewer")
+
     with gr.Accordion("Controls", open=True):
         with gr.Row():
             with gr.Column(scale=1):
-                # Confidence slider
-                confidence_threshold_slider = gr.Slider(0.1, 0.9, value=CONFIDENCE_THRESHOLD, step=0.05, label="Confidence Threshold")
-                confidence_threshold_slider.change(update_conf, inputs=[confidence_threshold_slider], outputs=[])
+                confidence_threshold_slider = gr.Slider(0.1,0.9,value=CONFIDENCE_THRESHOLD,step=0.05,label="Confidence")
             with gr.Column(scale=1):
-                # motion threshold
-                motion_threshold_slider = gr.Slider(100, 10000, value=MOTION_THRESHOLD, step=100, label="Motion Score (px)")
-                motion_threshold_slider.change(update_motion_factor, inputs=[motion_threshold_slider], outputs=[])
+                motion_threshold_slider = gr.Slider(100,10000,value=MOTION_THRESHOLD,step=100,label="Motion")
             with gr.Column(scale=4):
-                class_selector = gr.CheckboxGroup(
-                    choices=CLASSES_OF_INTEREST,
-                    value=CLASSES_OF_INTEREST,  # default = all selected
-                    label="Objects to Detect"
-            )
-            class_selector.change(fn=update_classes, inputs=[class_selector], outputs=[])
+                detection_classes = gr.CheckboxGroup(
+                        choices=CLASSES_OF_INTEREST,
+                        value=CLASSES_OF_INTEREST,
+                        label="Objects"
+                    )
+
+        confidence_threshold_slider.change(update_confidence_threshold, confidence_threshold_slider)
+        motion_threshold_slider.change(update_motion_threshold, motion_threshold_slider)
+        detection_classes.change(update_detection_classes, detection_classes)
 
     outputs = []
-    for i in range(0, len(RTSP_ENTRIES), 5):
+    for i in range(0, len(CAMERAS), 5):
         with gr.Row():
-            for name, url in RTSP_ENTRIES[i:i+5]:
+            for name, url in CAMERAS[i:i+5]:
                 with gr.Column():
-                    #original = gr.Image(label=name)
-                    annotated = gr.Image(label=f"{name}")
+                    annotated = gr.Image(label=f"{name}", streaming=True)
                     stats_box = gr.Textbox(
                         label=f"{name} Stats",
                         show_label=False,
-                        interactive=False
+                        interactive=False,
+                        elem_classes="mono-textbox"
                     )
                     # Add HD Mode toggle button
                     hd_toggle = gr.Checkbox(label="HD Mode", value=False)
                     hd_toggle.change(fn=update_hd_mode, inputs=[gr.State(value=name), hd_toggle],  outputs=[])
                     outputs.append((annotated, stats_box, name, url))
-                    #outputs.append((original, annotated, stats_box, name, url))
 
     # recordings HTML
     recordings_box = gr.HTML(label="All Recordings")
@@ -355,23 +362,26 @@ with gr.Blocks() as demo:
     # Event log HTML
     log_box = gr.HTML(label="Event Log", value=LOG_STREAM_DIV+"</div>", elem_classes="scrollable-log")
 
-    # Launch streams
-    #for original, annotated, stats, name, url in outputs:
-    #    demo.load(make_stream_fn(name, url), inputs=None, outputs=[original, annotated, stats])
+    # --- LAUNCH STREAMS ---
+    # Image streams
     for annotated, stats, name, url in outputs:
-        demo.load(make_stream_fn(name, url), inputs=None, outputs=[annotated, stats])
-
+        demo.load(fn=make_stream_fn(name, url), inputs=None, outputs=[annotated, stats])
     # Recordings stream
-    demo.load(
-        recordings_stream,
-        inputs=None,
-        outputs=recordings_box
-    )
+    demo.load(fn=recordings_stream, inputs=None, outputs=recordings_box)
     # Event log stream
-    demo.load(log_stream, inputs=None, outputs=log_box)
+    demo.load(fn=log_stream, inputs=None, outputs=log_box)
+
 
 if __name__ == "__main__":
+
     demo.launch(
+        #server_name="0.0.0.0",
         theme=gr.themes.Soft(),
-        allowed_paths=[f"./{RECORDINGS_DIR}/"],
-       )
+        allowed_paths=[RECORDINGS_DIR],
+        css="""
+.mono-textbox textarea {
+    font-family: "Courier New", monospace !important;
+    font-size: x-small !important;
+}
+""",
+        )
