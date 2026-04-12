@@ -14,15 +14,18 @@ from nvr import get_segments, merge_segments, cleanup_segments, start_segment_re
 from constants import (
     RECORDINGS_DIR,
     IMAGES_DIR,
-    SEGMENTS_DIR,
     TAIL_FRAME_COUNT,
     MOTION_FRAME_COUNT,
     PRE_RECORD,
     REQUIRE_OBJECT_FOR_RECORDING,
     EVENT_COOLDOWN,
     YOLO_SIZE,
-    MOTION_THRESHOLD,
+    CONFIDENCE_THRESHOLD_MIN,
     CONFIDENCE_THRESHOLD,
+    CONFIDENCE_THRESHOLD_MAX,
+    MOTION_THRESHOLD_MIN,
+    MOTION_THRESHOLD,
+    MOTION_THRESHOLD_MAX,
     RENDER_SIZE,
 
 )
@@ -325,9 +328,9 @@ with gr.Blocks() as demo:
     with gr.Accordion("Controls", open=True):
         with gr.Row():
             with gr.Column(scale=1):
-                confidence_threshold_slider = gr.Slider(0.1,0.9,value=CONFIDENCE_THRESHOLD,step=0.05,label="Confidence")
+                confidence_threshold_slider = gr.Slider(CONFIDENCE_THRESHOLD_MIN, CONFIDENCE_THRESHOLD_MAX, value=CONFIDENCE_THRESHOLD, step=0.05,label="Confidence")
             with gr.Column(scale=1):
-                motion_threshold_slider = gr.Slider(100,10000,value=MOTION_THRESHOLD,step=100,label="Motion")
+                motion_threshold_slider = gr.Slider(MOTION_THRESHOLD_MIN, MOTION_THRESHOLD_MAX, value=MOTION_THRESHOLD, step=50,label="Motion")
             with gr.Column(scale=4):
                 detection_classes = gr.CheckboxGroup(
                         choices=CLASSES_OF_INTEREST,
