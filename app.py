@@ -51,7 +51,7 @@ logger = logging.getLogger("yolo-rtsp-security-cam")
               default="logging-config.json",
               show_default=True)
 @click.option("--motion-threshold",
-              help="pixel change count threshold for motion detection (day, night)",
+              help="threshold for motion detection (day, night)",
               type=click.Tuple([
                   click.IntRange(min=MOTION_THRESHOLD_MIN[0], max=MOTION_THRESHOLD_MAX[0]),
                   click.IntRange(min=MOTION_THRESHOLD_MIN[1], max=MOTION_THRESHOLD_MAX[1])

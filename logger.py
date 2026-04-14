@@ -36,15 +36,17 @@ event_log = []
 # =========================
 def log_event(message, level="info", camera="", file_path=None):
     timestamp = datetime.now().strftime("%H:%M:%S")
-    colors = {"info":"#00c853","warn":"#ffd600","error":"#ff5252","record":"#17e8ff"}
+    colors = {"info":"#00c853","debug": "#AA0088", "warn":"#ffd600","error":"#ff5252","record":"#17e8ff"}
     color = colors.get(level,"#fff")
 
     #print(f"[{timestamp}] {camera:<8} {message}")
+    fstr = f"{camera + " " if camera else ""}{message}"
     match level:
-        case "info": logger.info(f"{camera} {message}")
-        case "warn": logger.warning(f"{camera} {message}")
-        case "error": logger.error(f"{camera} {message}")
-        case "record": logger.info(f"{camera} {message}")
+        case "info": logger.info(fstr)
+        case "debug": logger.info(fstr)
+        case "warn": logger.warning(fstr)
+        case "error": logger.error(fstr)
+        case "record": logger.info(fstr)
 
     if file_path:
         path = Path(file_path)

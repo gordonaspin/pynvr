@@ -141,7 +141,7 @@ class GUI:
 
                 if prev_gray is not None:
                     diff = cv2.absdiff(prev_gray, gray)
-                    thresh = cv2.threshold(diff,25,255,cv2.THRESH_BINARY)[1]
+                    _, thresh = cv2.threshold(diff,25,255,cv2.THRESH_BINARY)
                     score = cv2.countNonZero(thresh)
 
                     if score > self.motion_threshold[motion_threshold_index]:
