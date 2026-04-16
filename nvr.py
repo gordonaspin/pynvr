@@ -128,7 +128,7 @@ class NVR:
                 log_event(message=f"exception in cleanup_segments {e}", level="error")
 
     def get_segments(self, camera: Camera, n: int):
-        files = sorted(glob.glob(camera.segments_dir, "*.ts"))
+        files = sorted(glob.glob(os.path.join(camera.segments_dir, "*.ts")))
         return files[-n:]
 
     def merge_segments(self, files, output):
