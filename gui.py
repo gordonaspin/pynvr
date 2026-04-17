@@ -47,9 +47,11 @@ class GUI:
 
     def update_hd(self, name, val):
         self.nvr.cameras[name].hd = val
+        log_event(message=f"HD mode {"on" if val else "off"}", camera=self.nvr.cameras[name])
 
     def update_debug(self, val):
         self.nvr.debug = val
+        log_event(message=f"Debug {"on" if val else "off"}")
 
     # =========================
     # UI STREAMS
@@ -136,21 +138,22 @@ class GUI:
                                                                 minimum=constants.MOTION_THRESHOLD_MIN[0],
                                                                 maximum=constants.MOTION_THRESHOLD_MAX[0],
                                                                 value=self.ctx.motion_threshold[0],
-                                                                step=50,)
+                                                                step=50,
+                                                                )
                     with gr.Column(scale=1):
                         night_motion_threshold_slider = gr.Slider(label="Night Motion",
                                                                 minimum=constants.MOTION_THRESHOLD_MIN[1],
                                                                 maximum=constants.MOTION_THRESHOLD_MAX[1],
                                                                 value=self.ctx.motion_threshold[1],
-                                                                step=50,)
+                                                                step=50,
+                                                                )
 
                     with gr.Column(scale=4):
-                        detection_classes = gr.CheckboxGroup(
-                                choices=self.classes,
-                                value=self.classes,
-                                label="Objects"
-                            )
-                    with gr.Column(scale=1):
+                        detection_classes = gr.CheckboxGroup(label="Objects",
+                                                             choices=self.classes,
+                                                             value=self.classes,
+                                                             )
+                    with gr.Column(scale=0.5):
                         debug_checkbox = gr.Checkbox(label="Debug", value=False, elem_classes="custom-checkbox")
 
                 confidence_threshold_slider.change(self.update_confidence_threshold, confidence_threshold_slider)
@@ -167,14 +170,15 @@ class GUI:
                         if camera.enabled:
                             with gr.Column():
                                 annotated = gr.Image(label=f"{camera.name}")
-                                stats_box = gr.Textbox(
-                                    label=f"{camera.name} Stats",
-                                    show_label=False,
-                                    interactive=False,
-                                    elem_classes="mono-textbox"
+                                stats_box = gr.Textbox(label=f"{camera.name} Stats",
+                                                       show_label=False,
+                                                       interactive=False,
+                                                       elem_classes="mono-textbox"
                                 )
                                 # Add HD Mode toggle button
-                                hd_checkbox = gr.Checkbox(label="HD Mode", value=False, elem_classes="custom-checkbox")
+                                hd_checkbox = gr.Checkbox(label="HD Mode",
+                                                          value=False,
+                                                          elem_classes="custom-checkbox")
                                 hd_checkbox.change(fn=self.update_hd, inputs=[gr.State(value=camera.name), hd_checkbox],  outputs=[])
                                 outputs.append((annotated, stats_box, camera))
 
