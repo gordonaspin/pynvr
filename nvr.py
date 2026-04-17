@@ -3,8 +3,12 @@ import glob
 import threading
 import time
 import subprocess
+import threading
+from datetime import datetime
+from logging import getLogger
+import cv2
+import torch
 import numpy as np
-
 
 from ffmpeg import FFmpeg
 
@@ -12,15 +16,59 @@ import constants
 from context import Context
 from logger import log_event
 from camera import Camera
+from model import Model
+
+logger = getLogger("portside-nvrs")
+
+def _is_night_time(frame, brightness_threshold=50):
+    # Convert to HSV (Hue, Saturation, Value)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    
+    # Calculate average brightness (V channel)
+    mean_brightness = np.mean(hsv[:,:,2])
+    
+    # If brightness is low, it's likely night time
+    return mean_brightness < brightness_threshold
+
+def _keep_overlapping_any(boxes, ref_boxes):
+    """
+    boxes: YOLO r.boxes.xyxy  -> (N, 4)
+    ref_boxes: cv2.boundingRect -> (M, 4) in (x, y, x1, y1)
+    """
+
+    # 1. Ensure correct shapes
+    boxes = boxes.view(-1, 4)
+    ref_boxes = ref_boxes.view(-1, 4)
+
+    # 3. Compute pairwise intersection
+    x1 = torch.maximum(boxes[:, None, 0], ref_boxes[None, :, 0])
+    y1 = torch.maximum(boxes[:, None, 1], ref_boxes[None, :, 1])
+    x2 = torch.minimum(boxes[:, None, 2], ref_boxes[None, :, 2])
+    y2 = torch.minimum(boxes[:, None, 3], ref_boxes[None, :, 3])
+
+    inter_w = (x2 - x1).clamp(min=0)
+    inter_h = (y2 - y1).clamp(min=0)
+
+    overlap = (inter_w * inter_h) > 0  # (N, M)
+
+    # 4. Keep if overlaps ANY ROI
+    return overlap.any(dim=1)
 
 # =========================
 # NVR ENGINE
 # =========================
 class NVR:
-    def __init__(self, ctx: Context):
-        self.recordings_dir = ctx.directory
+    def __init__(self, ctx: Context, model: Model):
+        self.ctx = ctx
+        self.model = model
+        self.debug = self.ctx.debug
         self.width = ctx.resolution[0]
         self.height = ctx.resolution[1]
+        self.motion_threshold = self.ctx.motion_threshold
+        self.confidence_threshold = self.ctx.confidence_threshold
+        self.selected_classes = self.model.class_to_index(ctx.classes)
+
+        self.recordings_dir = ctx.directory
         self.segments_dir = os.path.join(self.recordings_dir, "segments")
         self.images_dir = os.path.join(self.recordings_dir, "images")
         os.makedirs(self.recordings_dir, exist_ok=True)
@@ -34,8 +82,8 @@ class NVR:
                                         recordings_dir=os.path.join(self.recordings_dir, name),
                                         segments_dir=os.path.join(self.segments_dir, name),
                                         images_dir=os.path.join(self.images_dir, name),
+                                        #frame=np.full((self.width, self.height, 3), 255, dtype=np.uint8)
                                         )
-
 
     def start(self):
         for camera in self.cameras.values():
@@ -45,6 +93,7 @@ class NVR:
                 os.makedirs(camera.images_dir, exist_ok=True)
                 log_event(message=f"starting recorder", level="info", camera=camera)
                 camera.process = self._start_segment_recorder(camera=camera)
+                threading.Thread(target=self._process_frames,args=(camera,), daemon=True).start()
         threading.Thread(target=self._cleanup_segments,daemon=True).start()
 
     def restart(self, camera):
@@ -122,11 +171,11 @@ class NVR:
             except Exception as e:
                 log_event(message=f"exception in cleanup_segments {e}", level="error")
 
-    def get_segments(self, camera: Camera, n: int):
+    def _get_segments(self, camera: Camera, n: int):
         files = sorted(glob.glob(os.path.join(camera.segments_dir, "*.ts")))
         return files[-n:]
 
-    def merge_segments(self, files, output):
+    def _merge_segments(self, files, output):
         list_file = output + ".txt"
         with open(list_file,"w") as f:
             for x in files:
@@ -142,7 +191,7 @@ class NVR:
 
         os.remove(list_file)
 
-    def frame_generator(self, camera: Camera, width, height):
+    def _frame_generator(self, camera: Camera, width, height):
         import numpy as np
         import time
 
@@ -152,7 +201,164 @@ class NVR:
             frame = None
             raw = self.cameras[camera.name].process.stdout.read(frame_size)
             ok = len(raw) == frame_size
-
             if ok:
                 frame = np.frombuffer(raw, np.uint8).reshape((height, width, 3))
             yield ok, frame
+
+    def _process_frames(self, camera: Camera):
+        threading.current_thread().name = f"{camera.name} camera"
+
+        prev_gray = None
+        motion_frames = 0
+        no_motion_frames = 0
+        recording = False
+        prev_time = time.time()
+        is_night = False
+
+        frame_gen = self._frame_generator(camera, self.width, self.height)
+        log_event(message=f"reading from stream", level="info", camera=camera)
+
+        while True:
+            try:
+                ret, frame = next(frame_gen)
+            except StopIteration:
+                break
+
+            if not ret:
+                log_event(message="stream read failed, attempting to reconnect...", level="warn", camera=camera)
+                self.restart(camera=camera)
+                continue
+
+            now = time.time()
+            if now - camera.last_night_time_check > constants.PERIODIC_CHECK_INTERVAL:
+                is_night = True if _is_night_time(frame, constants.NIGHT_TIME_THRESHOLD) else False
+                camera.last_night_time_check = time.time()
+                if now - prev_time > 10.0:
+                    log_event("stopped reading frames")
+
+            # motion
+            gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),(21,21),0)
+            motion_boxes = []
+            overlay = None
+
+            if prev_gray is not None:
+                diff = cv2.absdiff(prev_gray, gray)
+                _, thresh = cv2.threshold(diff,25,255,cv2.THRESH_BINARY)
+                score = cv2.countNonZero(thresh)
+
+                if score > self.motion_threshold[1 if is_night else 0]:
+                    # Motion is detected, get contours of moving objects
+                    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    for contour in contours:
+                        area = cv2.contourArea(contour)
+                        x1, y1, w, h = cv2.boundingRect(contour)
+                        x2 = x1 + w
+                        y2 = y1 + h
+                        if area < self.motion_threshold[is_night] / 10:  # filter small noise
+                            # Ignore small motion areas
+                            if self.debug:
+                                if overlay is None:
+                                    overlay = frame.copy()
+                                cv2.drawContours(overlay, [contour], -1, (0, 0, 255), 1)
+                                cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), 1)
+                            log_event(message=f"ignoring motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
+                        else:
+                            motion_boxes.append([x1, y1, x2, y2])
+                            if self.debug:
+                                if overlay is None:
+                                    overlay = frame.copy()
+                                cv2.drawContours(overlay, [contour], -1, (0, 255, 0), 1)
+                                cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 1)
+                                log_event(message=f"motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
+                                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                tag = "_".join(classes_in_frame) if classes_in_frame else "motion"
+                                image_filename = os.path.join(camera.images_dir, f"{timestamp}_{tag}.jpg")
+                                cv2.imwrite(image_filename, overlay)
+
+            prev_gray = gray
+
+            # YOLO
+            result = None
+            classes_in_frame = set()
+
+            # if there is large enough motion boxes, run YOLO and see if objects we care about overlap
+            # with the motion boxes (either the object is moving, or something is moving across the object)
+            if motion_boxes:
+                result = self.model.model.predict(frame, conf=self.confidence_threshold, classes=self.selected_classes if self.selected_classes else None, verbose=False)[0]
+                boxes = result.boxes.xyxy.reshape(-1, 4)
+                ref_motion_boxes = torch.as_tensor(motion_boxes, dtype=boxes.dtype, device=boxes.device)
+                keep = _keep_overlapping_any(boxes, ref_motion_boxes)
+                boxes = result.boxes[keep]
+
+                # store the name/class of object we saw in the frame that coincides with movement
+                for box in boxes:
+                    classes_in_frame.add(self.model.model.names[int(box.cls)])
+
+            # counters, we need motion (or no motion) for a number of consecutive frames to care
+            if motion_boxes:
+                motion_frames += 1
+                no_motion_frames = 0
+            else:
+                no_motion_frames += 1
+
+            # start
+            now = time.time()
+            if motion_frames >= constants.MOTION_DETECT_FRAME_COUNT and not recording:
+                valid_objects = len(classes_in_frame) > 0
+                if (not constants.REQUIRE_OBJECT_FOR_RECORDING or valid_objects):
+                    if now - camera.last_event_time > constants.EVENT_COOLDOWN:
+                        recording = True
+                        camera.active_segments = self._get_segments(camera, constants.PRE_RECORD_SEGMENTS)
+                        camera.active_objects = set(classes_in_frame)
+                        camera.last_event_time = now
+                        log_event(message=f"recording start {",".join(classes_in_frame) if classes_in_frame else ""}", level="info", camera=camera)
+
+            # update active segments and objects
+            if recording:
+                camera.active_segments += self._get_segments(camera,1)
+                camera.active_objects.update(classes_in_frame)
+
+            # stop recoding when there has been no motion for some time
+            if recording and no_motion_frames >= constants.NO_MOTION_DETECT_FRAME_COUNT:
+                recording = False
+                segments = list(dict.fromkeys(camera.active_segments))
+
+                # if we have segments, merge them into an mp4 file with timestamp and tags
+                if segments:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    tag = "_".join(camera.active_objects) if camera.active_objects else "motion"
+
+                    recording_filename = os.path.join(camera.recordings_dir, f"{timestamp}_{tag}.mp4")
+                    self.nvr.merge_segments(segments, recording_filename)
+
+                    recorded_cap = cv2.VideoCapture(recording_filename)
+                    frame_count = recorded_cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                    if frame_count < constants.NO_MOTION_DETECT_FRAME_COUNT + 20 and os.path.isfile(recording_filename):
+                        os.remove(recording_filename)
+                        log_event(message=f"recording auto-deleted {os.path.basename(recording_filename)} with {frame_count} frames", info="info", camera=camera, file_path=recording_filename)
+                    else:
+                        log_event(message=f"recording available {os.path.basename(recording_filename)}", level="record", camera=camera, file_path=recording_filename)
+
+                camera.active_segments = {}
+                classes_in_frame = {}
+                camera.active_objects = {}
+                motion_frames = 0
+                no_motion_frames = 0
+
+            # render YOLO plots on the frame if there was a result
+            img = result.plot() if result else frame
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            if overlay is not None:
+                img = cv2.addWeighted(img, 0.7, overlay, 0.3, 0)
+
+            if not self.cameras[camera.name].hd:
+                img = cv2.resize(img, constants.RENDER_SIZE)
+
+            fps = 1/(time.time()-prev_time)
+            prev_time = time.time()
+
+            status = "🔴 REC" if recording else "🟢 LIVE"
+            
+            camera.frame = img
+            camera.status = f"{status} {"| Night " if is_night else ""}| FPS {int(fps)}" + (f" | {",".join(classes_in_frame)}" if len(classes_in_frame) > 0 else "")
+            

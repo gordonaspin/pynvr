@@ -7,22 +7,22 @@
     "cameras": {
         "B67Lot": {
             "url": "rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=1&subtype=1",
-            "enabled": true
+            "enabled": false
         },
         "B56Lot": {
             "url": "rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=2&subtype=1",
-            "enabled": true
+            "enabled": false
         },
         "B5Lot": {
             "url": "rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=3&subtype=1",
-            "enabled": true
+            "enabled": false
         },
         "Pool": {
-            "url": "rtsp://admin:Portside123!!!@24.224.79.138:554/cam/realmonitor?channel=1&subtype=1",
+            "url": "rtsp://admin:Portside123!!!@portsidepool.noip.me:554/cam/realmonitor?channel=1&subtype=1",
             "enabled": true
         },
         "PoolEntry": {
-            "url": "rtsp://admin:Portside123!!!@24.224.79.138:554/cam/realmonitor?channel=2&subtype=1",
+            "url": "rtsp://admin:Portside123!!!@portsidepool.noip.me:554/cam/realmonitor?channel=2&subtype=1",
             "enabled": true
         }
     }

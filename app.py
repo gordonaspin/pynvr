@@ -116,12 +116,13 @@ def main(directory: str,
         debug=debug,
     )
 
-    nvr = NVR(ctx)
-
     model = Model(ctx)
-    trained_imgsz = model.model.args['imgsz']
-    logger.info(f"Model was trained with image size: {trained_imgsz}")
-    gui = GUI(ctx, model, nvr)
+    logger.info(f"Model was trained with image size: {model.model.args['imgsz']}")
+    
+    nvr = NVR(ctx, model)
+    nvr.start()
+
+    gui = GUI(ctx, nvr)
     gui.run()
 
 if __name__ == "__main__":

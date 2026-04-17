@@ -1,5 +1,6 @@
 import dataclasses
 from subprocess import Popen
+import numpy as np
 
 @dataclasses.dataclass
 class Camera:
@@ -9,6 +10,7 @@ class Camera:
     recordings_dir: str
     segments_dir: str
     images_dir: str
+    frame: np.ndarray = None
     process: Popen = None
     hd: bool = False
     last_event_time: float = 0.0
@@ -16,3 +18,4 @@ class Camera:
     last_status_update: float = 0.0
     active_objects: dict = dataclasses.field(default_factory=dict)
     active_segments: dict = dataclasses.field(default_factory=dict)
+    status: str = "Not streaming"
