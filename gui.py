@@ -3,6 +3,7 @@ from pathlib import Path
 import time
 from logging import getLogger
 import gradio as gr
+import html
 
 import constants
 from logger import log_event, event_log
@@ -57,65 +58,74 @@ class GUI:
     # UI STREAMS
     # =========================
     # --- Event log streamer ---
-    def log_stream(self):
-        html = """
-    <div class="inner-log" style="
-        height: 300px; 
-        overflow-y: auto; 
-        border: 1px solid #ccc; 
-        padding: 5px; 
-        font-family: monospace;
-        font-size: small;
-        background-color: #1e1e1e; 
-        color: #ffffff;
-        box-sizing: border-box;
-    ">
-    <div style="font-weight: bold; margin-bottom: 8px; font-size: small;">
-        📜 Event Log
-    </div>
-    """
-        while True:
-            content = "".join(event_log)
-            yield html + content + "</div>" # + scroll_js
-            time.sleep(0.5)
+    def get_log_html(self):
+        content = "".join(x for x in event_log[-constants.MAX_LOG_LINES:])
 
-    def recordings_stream(self):
-        while True:
-            files=[]
-            for r,_,f in os.walk(self.nvr.recordings_dir):
-                for x in f:
-                    if x.endswith(".mp4"):
-                        files.append(os.path.join(r,x))
+        return f"""
+        <div style="
+            height:300px;
+            overflow-y:auto;
+            border:1px solid #ccc;
+            padding:5px;
+            font-family:monospace;
+            font-size:12px;
+            background-color:#1e1e1e;
+            color:#ffffff;
+        ">
+            <div style="font-weight:bold; margin-bottom:8px;">
+                📜 Event Log
+            </div>
+            {content}
+        </div>
+        """
 
-            try:
-                files.sort(key=os.path.getmtime, reverse=True)
-            except FileNotFoundError:
-                time.sleep(2)
-                continue
+    def get_recordings_html(self):
+        files = []
 
-            html="""
-            <div style="
-                height: 300px;
-                overflow-y: auto;
-                border: 1px solid #ccc;
-                padding: 5px;
-                font-family: monospace;
-                font-size: small;
-                background-color: #1e1e1e;
-                color: #ffffff;
-                box-sizing: border-box;
-            ">
-                <div style="font-weight: bold; margin-bottom: 8px; font-size: medium;">
-                    🎥 Recordings
-                </div>
-            """
-            for f in files:
-                p = Path(f)
-                html+=f'<a href="/gradio_api/file={f}" target="_blank" style="color: white;">{p.parent.name}/{p.name}</a><br>'
-            html+="</div>"
+        for r, _, f in os.walk(self.nvr.recordings_dir):
+            for x in f:
+                if x.endswith(".mp4"):
+                    files.append(os.path.join(r, x))
 
-            yield html
-            time.sleep(2)
+        try:
+            files.sort(key=os.path.getmtime, reverse=True)
+        except FileNotFoundError:
+            return "<div>Loading...</div>"
+
+        files = files[:constants.MAX_LOG_LINES]
+
+        html_content = """
+        <div style="
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            background-color: #1e1e1e;
+            color: #ffffff;
+        ">
+            <div style="font-weight: bold; margin-bottom: 8px; font-size: medium;">
+                🎥 Recordings
+            </div>
+        """
+
+        for f in files:
+            p = Path(f)
+
+            # escape display text (important for safety)
+            label = html.escape(f"{p.parent.name}/{p.name}")
+            label = f"{p.parent.name}/{p.name}"
+
+            html_content += (
+                f'<a href="/gradio_api/file={f}" '
+                f'target="_blank" '
+                f'style="color:white; text-decoration:underline;">{label}</a><br>'
+            )
+
+        html_content += "</div>"
+
+        return html_content
 
     def on_load(self):
         log_event(f"A browser has connected to the app")
@@ -125,7 +135,7 @@ class GUI:
         with gr.Blocks() as demo:
             gr.Markdown("## Portside Condominiums Security Cam Viewer")
 
-            with gr.Accordion("Controls", open=True):
+            with gr.Accordion("Controls", open=False):
                 with gr.Row():
                     with gr.Column(scale=1):
                         confidence_threshold_slider = gr.Slider(label="Confidence",
@@ -187,9 +197,14 @@ class GUI:
                 with gr.Column(scale=2):
                     # Event log HTML
                     log_box = gr.HTML(label="Event Log")
+                    timer = gr.Timer(0.5)  # update every 0.5s
+                    timer.tick(fn=self.get_log_html, outputs=log_box)
+
                 with gr.Column(scale=1):
                     # recordings HTML
                     recordings_box = gr.HTML(label="All Recordings")
+                    timer = gr.Timer(2.0)  # update every 2.0s
+                    timer.tick(fn=self.get_recordings_html, outputs=recordings_box)
 
             timer = gr.Timer(1.0/20.0)
             
@@ -201,9 +216,9 @@ class GUI:
                     outputs=[annotated, stats]
                     )
             # Recordings stream
-            demo.load(fn=self.recordings_stream, inputs=None, outputs=recordings_box)
+            #demo.load(fn=self.recordings_stream, inputs=None, outputs=recordings_box)
             # Event log stream
-            demo.load(fn=self.log_stream, inputs=None, outputs=log_box)
+            #demo.load(fn=self.log_stream, inputs=None, outputs=log_box)
             demo.load(fn=self.on_load)
 
 

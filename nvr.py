@@ -185,7 +185,14 @@ class NVR:
             FFmpeg()
             .option("y")
             .input(list_file, f="concat", safe=0)
-            .output(output, c="copy")
+            .output(
+                output,
+                c="libx264",
+                pix_fmt="yuv420p",
+                movflags="+faststart",
+                preset="veryfast",
+                crf=23
+            )
             .execute()
         )
 
