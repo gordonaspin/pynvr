@@ -3,26 +3,38 @@ import json
 import logging
 import click
 from click import version_option
-
+from urllib.parse import urlparse, urlunparse
+ 
 from logger import setup_logging, log_event, event_log
 from nvr import NVR
 from context import Context
 from model import Model
 from gui import GUI
 from camera import Camera
-
 import constants
-#from constants import (
-#    CONFIDENCE_THRESHOLD_MIN,
-#    CONFIDENCE_THRESHOLD,
-#    CONFIDENCE_THRESHOLD_MAX,
-#    MOTION_THRESHOLD_MIN,
-#    MOTION_THRESHOLD,
-#    MOTION_THRESHOLD_MAX,
-#    MOTION_DETECT_FRAME_COUNT
-#)
 
 logger = logging.getLogger("portside-nvrs")
+
+def replace_url_credentials(url, new_username, new_password):
+    parsed = urlparse(url)
+
+    # Build new netloc
+    hostname = parsed.hostname or ""
+    port = f":{parsed.port}" if parsed.port else ""
+
+    userinfo = ""
+    if new_username is not None:
+        userinfo = new_username
+        if new_password is not None:
+            userinfo += f":{new_password}"
+        userinfo += "@"
+
+    new_netloc = f"{userinfo}{hostname}{port}"
+
+    # Reconstruct URL
+    new_parsed = parsed._replace(netloc=new_netloc)
+    return urlunparse(new_parsed)
+
 
 @click.command(
         context_settings={"help_option_names": ["-h", "--help"], "max_content_width": 120},
@@ -101,6 +113,8 @@ def main(directory: str,
     yolo = config['yolo']
     resolution = config['resolution']
     camera_config = config['cameras']
+    for camera in camera_config.values():
+        camera['url'] = replace_url_credentials(camera['url'], username, password)    
 
     ctx = Context(
         directory=directory,
@@ -118,7 +132,7 @@ def main(directory: str,
 
     model = Model(ctx)
     logger.info(f"Model was trained with image size: {model.model.args['imgsz']}")
-    
+
     nvr = NVR(ctx, model)
     nvr.start()
 

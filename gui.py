@@ -153,7 +153,7 @@ class GUI:
                                                              choices=self.classes,
                                                              value=self.classes,
                                                              )
-                    with gr.Column(scale=0.5):
+                    with gr.Column(scale=1):
                         debug_checkbox = gr.Checkbox(label="Debug", value=False, elem_classes="custom-checkbox")
 
                 confidence_threshold_slider.change(self.update_confidence_threshold, confidence_threshold_slider)

@@ -82,7 +82,6 @@ class NVR:
                                         recordings_dir=os.path.join(self.recordings_dir, name),
                                         segments_dir=os.path.join(self.segments_dir, name),
                                         images_dir=os.path.join(self.images_dir, name),
-                                        #frame=np.full((self.width, self.height, 3), 255, dtype=np.uint8)
                                         )
 
     def start(self):
@@ -93,6 +92,7 @@ class NVR:
                 os.makedirs(camera.images_dir, exist_ok=True)
                 log_event(message=f"starting recorder", level="info", camera=camera)
                 camera.process = self._start_segment_recorder(camera=camera)
+                threading.Thread(target=self._frame_reader, args=(camera,), daemon=True).start()
                 threading.Thread(target=self._process_frames,args=(camera,), daemon=True).start()
         threading.Thread(target=self._cleanup_segments,daemon=True).start()
 
@@ -100,8 +100,14 @@ class NVR:
         if camera.enabled and camera.process is not None:
             ret = camera.process.poll()
             log_event(message=f"restarting recorder with ret {ret}", level="info", camera=camera)
-            camera.process.communicate(input=b'q') 
-            camera.process.wait()
+            camera.process.terminate()
+
+            try:
+                camera.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                camera.process.kill()
+            camera.process.stdout.close()
+            camera.process.stdin.close()
             camera.process = self._start_segment_recorder(camera=camera)
 
     def _start_segment_recorder(self, camera: Camera):
@@ -191,50 +197,75 @@ class NVR:
 
         os.remove(list_file)
 
-    def _frame_generator(self, camera: Camera, width, height):
-        import numpy as np
-        import time
+    def _frame_reader(self, camera: Camera):
+        frame_size = self.width * self.height * 3
+        prev_time = time.time()
 
-        frame_size = width * height * 3
+        while camera.running:
+            raw = self._read_exact(camera.process.stdout, frame_size)
 
-        while True:
-            frame = None
-            raw = self.cameras[camera.name].process.stdout.read(frame_size)
-            ok = len(raw) == frame_size
-            if ok:
-                frame = np.frombuffer(raw, np.uint8).reshape((height, width, 3))
-            yield ok, frame
+            if raw is None:
+                log_event(message="reader failed, restarting stream", level="warn", camera=camera)
+                self.restart(camera)
+                continue
+
+            frame = np.frombuffer(raw, np.uint8).reshape((self.height, self.width, 3))
+
+            # FPS calculation
+            now = time.perf_counter()
+            if camera.last_frame_time > 0:
+                dt = now - camera.last_frame_time
+
+                # filter pipeline artifacts (VERY IMPORTANT)
+                if 0.01 < dt < 1.0:
+                    inst_fps = 1.0 / dt
+                    camera.fps.update(inst_fps)
+
+            camera.last_frame_time = now
+
+            # latest-frame-wins
+            with camera.frame_lock:
+                camera.latest_frame = frame
+
+    def _read_exact(self, pipe, size):
+        buf = b""
+        while len(buf) < size:
+            chunk = pipe.read(size - len(buf))
+            if not chunk:
+                return None
+            buf += chunk
+        return buf
 
     def _process_frames(self, camera: Camera):
         threading.current_thread().name = f"{camera.name} camera"
 
+        first_frame = True
         prev_gray = None
         motion_frames = 0
         no_motion_frames = 0
         recording = False
         prev_time = time.time()
-        is_night = False
+        is_night = 0
 
-        frame_gen = self._frame_generator(camera, self.width, self.height)
-        log_event(message=f"reading from stream", level="info", camera=camera)
+        while camera.running:
+        # 👇 get latest frame (non-blocking)
+            with camera.frame_lock:
+                frame = None if camera.latest_frame is None else camera.latest_frame.copy()
 
-        while True:
-            try:
-                ret, frame = next(frame_gen)
-            except StopIteration:
-                break
-
-            if not ret:
-                log_event(message="stream read failed, attempting to reconnect...", level="warn", camera=camera)
-                self.restart(camera=camera)
+            if frame is None:
+                time.sleep(0.01)
                 continue
+
+            elif first_frame:
+                log_event(message=f"first frame read from stream", level="info", camera=camera)
+                first_frame = False
 
             now = time.time()
             if now - camera.last_night_time_check > constants.PERIODIC_CHECK_INTERVAL:
-                is_night = True if _is_night_time(frame, constants.NIGHT_TIME_THRESHOLD) else False
+                is_night = 1 if _is_night_time(frame, constants.NIGHT_TIME_THRESHOLD) else 0
                 camera.last_night_time_check = time.time()
                 if now - prev_time > 10.0:
-                    log_event("stopped reading frames")
+                    log_event("stopped reading frames", level="info", camera=camera)
 
             # motion
             gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),(21,21),0)
@@ -246,7 +277,7 @@ class NVR:
                 _, thresh = cv2.threshold(diff,25,255,cv2.THRESH_BINARY)
                 score = cv2.countNonZero(thresh)
 
-                if score > self.motion_threshold[1 if is_night else 0]:
+                if score > self.motion_threshold[is_night]:
                     # Motion is detected, get contours of moving objects
                     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                     for contour in contours:
@@ -271,7 +302,7 @@ class NVR:
                                 cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 1)
                                 log_event(message=f"motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
                                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                tag = "_".join(classes_in_frame) if classes_in_frame else "motion"
+                                tag = "_".join( camera.active_objects_set) if  camera.active_objects_set else "motion"
                                 image_filename = os.path.join(camera.images_dir, f"{timestamp}_{tag}.jpg")
                                 cv2.imwrite(image_filename, overlay)
 
@@ -283,7 +314,8 @@ class NVR:
 
             # if there is large enough motion boxes, run YOLO and see if objects we care about overlap
             # with the motion boxes (either the object is moving, or something is moving across the object)
-            if motion_boxes:
+            if motion_boxes and (time.time() - camera.last_yolo_time > 0.2):
+                camera.last_yolo_time = time.time()
                 result = self.model.model.predict(frame, conf=self.confidence_threshold, classes=self.selected_classes if self.selected_classes else None, verbose=False)[0]
                 boxes = result.boxes.xyxy.reshape(-1, 4)
                 ref_motion_boxes = torch.as_tensor(motion_boxes, dtype=boxes.dtype, device=boxes.device)
@@ -308,40 +340,40 @@ class NVR:
                 if (not constants.REQUIRE_OBJECT_FOR_RECORDING or valid_objects):
                     if now - camera.last_event_time > constants.EVENT_COOLDOWN:
                         recording = True
-                        camera.active_segments = self._get_segments(camera, constants.PRE_RECORD_SEGMENTS)
-                        camera.active_objects = set(classes_in_frame)
+                        camera.active_segments_list = self._get_segments(camera, constants.PRE_RECORD_SEGMENTS)
+                        camera.active_objects_set = set(classes_in_frame)
                         camera.last_event_time = now
                         log_event(message=f"recording start {",".join(classes_in_frame) if classes_in_frame else ""}", level="info", camera=camera)
 
             # update active segments and objects
             if recording:
-                camera.active_segments += self._get_segments(camera,1)
-                camera.active_objects.update(classes_in_frame)
+                camera.active_segments_list += self._get_segments(camera,1)
+                camera.active_objects_set.update(classes_in_frame)
 
             # stop recoding when there has been no motion for some time
             if recording and no_motion_frames >= constants.NO_MOTION_DETECT_FRAME_COUNT:
                 recording = False
-                segments = list(dict.fromkeys(camera.active_segments))
+                segments = list(dict.fromkeys(camera.active_segments_list))
 
                 # if we have segments, merge them into an mp4 file with timestamp and tags
                 if segments:
                     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                    tag = "_".join(camera.active_objects) if camera.active_objects else "motion"
+                    tag = "_".join(camera.active_objects_set) if camera.active_objects_set else "motion"
 
                     recording_filename = os.path.join(camera.recordings_dir, f"{timestamp}_{tag}.mp4")
-                    self.nvr.merge_segments(segments, recording_filename)
+                    self._merge_segments(segments, recording_filename)
 
                     recorded_cap = cv2.VideoCapture(recording_filename)
                     frame_count = recorded_cap.get(cv2.CAP_PROP_FRAME_COUNT)
                     if frame_count < constants.NO_MOTION_DETECT_FRAME_COUNT + 20 and os.path.isfile(recording_filename):
                         os.remove(recording_filename)
-                        log_event(message=f"recording auto-deleted {os.path.basename(recording_filename)} with {frame_count} frames", info="info", camera=camera, file_path=recording_filename)
+                        log_event(message=f"recording auto-deleted {os.path.basename(recording_filename)} with {frame_count} frames", level="info", camera=camera, file_path=recording_filename)
                     else:
                         log_event(message=f"recording available {os.path.basename(recording_filename)}", level="record", camera=camera, file_path=recording_filename)
 
-                camera.active_segments = {}
+                camera.active_segments_list = []
                 classes_in_frame = {}
-                camera.active_objects = {}
+                camera.active_objects_set = set()
                 motion_frames = 0
                 no_motion_frames = 0
 
@@ -354,11 +386,10 @@ class NVR:
             if not self.cameras[camera.name].hd:
                 img = cv2.resize(img, constants.RENDER_SIZE)
 
-            fps = 1/(time.time()-prev_time)
             prev_time = time.time()
 
             status = "🔴 REC" if recording else "🟢 LIVE"
             
             camera.frame = img
-            camera.status = f"{status} {"| Night " if is_night else ""}| FPS {int(fps)}" + (f" | {",".join(classes_in_frame)}" if len(classes_in_frame) > 0 else "")
+            camera.status = f"{status} {"| Night " if is_night else ""}| FPS {int(camera.fps.value())}" + (f" | {",".join(classes_in_frame)}" if len(classes_in_frame) > 0 else "")
             

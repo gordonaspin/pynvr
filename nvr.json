@@ -6,23 +6,24 @@
     },
     "cameras": {
         "B67Lot": {
-            "url": "rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=1&subtype=1",
-            "enabled": false
+            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "enabled": true
         },
         "B56Lot": {
-            "url": "rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=2&subtype=1",
-            "enabled": false
+            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "enabled": true
+
         },
         "B5Lot": {
-            "url": "rtsp://admin:Portside123!!!@shed.portsidecondominium.com:554/cam/realmonitor?channel=3&subtype=1",
-            "enabled": false
+            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=3&subtype=1",
+            "enabled": true
         },
         "Pool": {
-            "url": "rtsp://admin:Portside123!!!@portsidepool.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "url": "rtsp://username:password@portsidepool.noip.me:554/cam/realmonitor?channel=1&subtype=1",
             "enabled": true
         },
         "PoolEntry": {
-            "url": "rtsp://admin:Portside123!!!@portsidepool.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "url": "rtsp://username:password@portsidepool.noip.me:554/cam/realmonitor?channel=2&subtype=1",
             "enabled": true
         }
     }
