@@ -4,6 +4,7 @@ import threading
 import time
 import subprocess
 import threading
+import queue
 from datetime import datetime
 from logging import getLogger
 import cv2
@@ -198,6 +199,8 @@ class NVR:
         os.remove(list_file)
 
     def _frame_reader(self, camera: Camera):
+        threading.current_thread().name = f"{camera.name} _frame_reader"
+
         frame_size = self.width * self.height * 3
         prev_time = time.time()
 
@@ -224,8 +227,9 @@ class NVR:
             camera.last_frame_time = now
 
             # latest-frame-wins
-            with camera.frame_lock:
-                camera.latest_frame = frame
+            if camera.frame_queue.full():
+                camera.frame_queue.get_nowait()
+            camera.frame_queue.put(frame)
 
     def _read_exact(self, pipe, size):
         buf = b""
@@ -237,7 +241,7 @@ class NVR:
         return buf
 
     def _process_frames(self, camera: Camera):
-        threading.current_thread().name = f"{camera.name} camera"
+        threading.current_thread().name = f"{camera.name} _process_frames"
 
         first_frame = True
         prev_gray = None
@@ -248,19 +252,18 @@ class NVR:
         is_night = 0
 
         while camera.running:
-        # 👇 get latest frame (non-blocking)
-            with camera.frame_lock:
-                frame = None if camera.latest_frame is None else camera.latest_frame.copy()
-
-            if frame is None:
-                time.sleep(0.01)
+            # get latest frame (non-blocking)
+            try:
+                frame = camera.frame_queue.get(timeout=0.5)
+            except queue.Empty:
                 continue
 
-            elif first_frame:
+            if first_frame:
                 log_event(message=f"first frame read from stream", level="info", camera=camera)
                 first_frame = False
 
             now = time.time()
+
             if now - camera.last_night_time_check > constants.PERIODIC_CHECK_INTERVAL:
                 is_night = 1 if _is_night_time(frame, constants.NIGHT_TIME_THRESHOLD) else 0
                 camera.last_night_time_check = time.time()
@@ -268,13 +271,14 @@ class NVR:
                     log_event("stopped reading frames", level="info", camera=camera)
 
             # motion
-            gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),(21,21),0)
-            motion_boxes = []
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY, dst=camera.gray_buf)
+            gray = cv2.GaussianBlur(gray, (21,21), 0, dst=camera.gray_buf)
+            camera.motion_boxes_list.clear()
             overlay = None
 
             if prev_gray is not None:
-                diff = cv2.absdiff(prev_gray, gray)
-                _, thresh = cv2.threshold(diff,25,255,cv2.THRESH_BINARY)
+                diff = cv2.absdiff(prev_gray, gray, dst=camera.diff_buf)
+                _, thresh = cv2.threshold(diff,25,255,cv2.THRESH_BINARY, dst=camera.thresh_buf)
                 score = cv2.countNonZero(thresh)
 
                 if score > self.motion_threshold[is_night]:
@@ -294,7 +298,7 @@ class NVR:
                                 cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), 1)
                                 log_event(message=f"ignoring motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
                         else:
-                            motion_boxes.append([x1, y1, x2, y2])
+                            camera.motion_boxes_list.append([x1, y1, x2, y2])
                             if self.debug:
                                 if overlay is None:
                                     overlay = frame.copy()
@@ -310,45 +314,44 @@ class NVR:
 
             # YOLO
             result = None
-            classes_in_frame = set()
+            camera.classes_in_frame_set.clear()
 
             # if there is large enough motion boxes, run YOLO and see if objects we care about overlap
             # with the motion boxes (either the object is moving, or something is moving across the object)
-            if motion_boxes and (time.time() - camera.last_yolo_time > 0.2):
+            if camera.motion_boxes_list and (time.time() - camera.last_yolo_time > 0.2):
                 camera.last_yolo_time = time.time()
                 result = self.model.model.predict(frame, conf=self.confidence_threshold, classes=self.selected_classes if self.selected_classes else None, verbose=False)[0]
                 boxes = result.boxes.xyxy.reshape(-1, 4)
-                ref_motion_boxes = torch.as_tensor(motion_boxes, dtype=boxes.dtype, device=boxes.device)
-                keep = _keep_overlapping_any(boxes, ref_motion_boxes)
+                ref_motion_boxes_list = torch.as_tensor(camera.motion_boxes_list, dtype=boxes.dtype, device=boxes.device)
+                keep = _keep_overlapping_any(boxes, ref_motion_boxes_list)
                 boxes = result.boxes[keep]
 
                 # store the name/class of object we saw in the frame that coincides with movement
                 for box in boxes:
-                    classes_in_frame.add(self.model.model.names[int(box.cls)])
+                    camera.classes_in_frame_set.add(self.model.model.names[int(box.cls)])
 
             # counters, we need motion (or no motion) for a number of consecutive frames to care
-            if motion_boxes:
+            if camera.motion_boxes_list:
                 motion_frames += 1
                 no_motion_frames = 0
             else:
                 no_motion_frames += 1
 
             # start
-            now = time.time()
             if motion_frames >= constants.MOTION_DETECT_FRAME_COUNT and not recording:
-                valid_objects = len(classes_in_frame) > 0
+                valid_objects = len(camera.classes_in_frame_set) > 0
                 if (not constants.REQUIRE_OBJECT_FOR_RECORDING or valid_objects):
                     if now - camera.last_event_time > constants.EVENT_COOLDOWN:
                         recording = True
                         camera.active_segments_list = self._get_segments(camera, constants.PRE_RECORD_SEGMENTS)
-                        camera.active_objects_set = set(classes_in_frame)
+                        camera.active_objects_set = set(camera.classes_in_frame_set)
                         camera.last_event_time = now
-                        log_event(message=f"recording start {",".join(classes_in_frame) if classes_in_frame else ""}", level="info", camera=camera)
+                        log_event(message=f"recording start {", ".join(camera.active_objects_set) if camera.active_objects_set else ""}", level="info", camera=camera)
 
             # update active segments and objects
             if recording:
                 camera.active_segments_list += self._get_segments(camera,1)
-                camera.active_objects_set.update(classes_in_frame)
+                camera.active_objects_set.update(camera.classes_in_frame_set)
 
             # stop recoding when there has been no motion for some time
             if recording and no_motion_frames >= constants.NO_MOTION_DETECT_FRAME_COUNT:
@@ -371,9 +374,9 @@ class NVR:
                     else:
                         log_event(message=f"recording available {os.path.basename(recording_filename)}", level="record", camera=camera, file_path=recording_filename)
 
-                camera.active_segments_list = []
-                classes_in_frame = {}
-                camera.active_objects_set = set()
+                camera.active_segments_list.clear()
+                camera.classes_in_frame_set.clear()
+                camera.active_objects_set.clear()
                 motion_frames = 0
                 no_motion_frames = 0
 
@@ -388,8 +391,17 @@ class NVR:
 
             prev_time = time.time()
 
-            status = "🔴 REC" if recording else "🟢 LIVE"
+            status = self.make_status(recording)
             
-            camera.frame = img
-            camera.status = f"{status} {"| Night " if is_night else ""}| FPS {int(camera.fps.value())}" + (f" | {",".join(classes_in_frame)}" if len(classes_in_frame) > 0 else "")
+            camera.latest_frame = img
+            camera.status = f"{status} {"| Night " if is_night else ""}| FPS {int(camera.fps.value())}" + (f" | {",".join(camera.active_objects_set)}" if len(camera.active_objects_set) > 0 else "")
             
+    def make_status(self, recording: bool):
+        idx = int(time.time() * 4) % 4
+
+        red_cycle = ["●", "◉", "○", "◉"]
+        green_cycle = ["●", "◉", "○", "◉"]
+
+        pulse = red_cycle[idx] if recording else green_cycle[idx]
+
+        return f"{pulse} {'🔴 REC' if recording else '🟢 LIVE'}"

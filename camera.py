@@ -1,7 +1,7 @@
 import dataclasses
 from subprocess import Popen
 import numpy as np
-from threading import Lock
+from queue import Queue
 
 from collections import deque
 
@@ -33,7 +33,6 @@ class Camera:
     recordings_dir: str
     segments_dir: str
     images_dir: str
-    frame: np.ndarray = None
 
     # stream state
     process: Popen = None
@@ -41,7 +40,12 @@ class Camera:
 
     # latest-frame-wins buffer
     latest_frame: np.ndarray = None
-    frame_lock: Lock = dataclasses.field(default_factory=Lock)
+    frame_queue: Queue = dataclasses.field(default_factory=lambda: Queue(maxsize=1))
+
+    # buffers for cv2 frames
+    gray_buf = None
+    diff_buf = None
+    thresh_buf = None
 
     # FPS tracking (IMPORTANT FIX: per-instance)
     fps: RollingAverage = dataclasses.field(default_factory=lambda: RollingAverage(100))
@@ -56,6 +60,9 @@ class Camera:
     last_night_time_check: float = 0.0
     last_yolo_time: float = 0.0
 
+    # motion detection
+    motion_boxes_list: list = dataclasses.field(default_factory=list)
+    classes_in_frame_set: set = dataclasses.field(default_factory=set)
     active_objects_set: set = dataclasses.field(default_factory=set)
     active_segments_list: list = dataclasses.field(default_factory=list)
     

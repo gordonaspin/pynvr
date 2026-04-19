@@ -19,7 +19,7 @@ class GUI:
         self.nvr = nvr
 
     def get_frame(self, camera: Camera):
-        frame = camera.frame
+        frame = camera.latest_frame
 
         if frame is None:
             return None, "Waiting..."
@@ -117,10 +117,11 @@ class GUI:
             yield html
             time.sleep(2)
 
+    def on_load(self):
+        log_event(f"A browser has connected to the app")
+
     def run(self):
-        # =========================
         # BUILD UI
-        # =========================
         with gr.Blocks() as demo:
             gr.Markdown("## Portside Condominiums Security Cam Viewer")
 
@@ -192,7 +193,6 @@ class GUI:
 
             timer = gr.Timer(1.0/20.0)
             
-            # --- LAUNCH STREAMS ---
             # Image streams
             for annotated, stats, camera in outputs:
                 timer.tick(
@@ -204,6 +204,8 @@ class GUI:
             demo.load(fn=self.recordings_stream, inputs=None, outputs=recordings_box)
             # Event log stream
             demo.load(fn=self.log_stream, inputs=None, outputs=log_box)
+            demo.load(fn=self.on_load)
+
 
         demo.queue()
         demo.launch(
