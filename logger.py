@@ -33,7 +33,7 @@ from logging import (
 from typing import Any, Type, override
 from types import TracebackType
 
-logger = getLogger("portside-nvrs")
+logger = getLogger("nvr")
 
 import constants
 

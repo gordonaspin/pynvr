@@ -33,7 +33,7 @@
       "class": "logging.handlers.RotatingFileHandler",
       "level": "DEBUG",
       "formatter": "thread detailed",
-      "filename": "portside-nvrs.log",
+      "filename": "nvr.log",
       "maxBytes": 10000000,
       "backupCount": 3,
       "filters": ["KeywordFilter"]
@@ -47,7 +47,7 @@
         "file"
       ]
     },
-    "portside-nvrs": {
+    "nvr": {
       "level": "DEBUG",
       "handlers": [
         "stderr",

@@ -19,7 +19,7 @@ from logger import log_event
 from camera import Camera
 from model import Model
 
-logger = getLogger("portside-nvrs")
+logger = getLogger("nvr")
 
 def _is_night_time(frame, brightness_threshold=50):
     # Convert to HSV (Hue, Saturation, Value)
@@ -296,7 +296,7 @@ class NVR:
                                     overlay = frame.copy()
                                 cv2.drawContours(overlay, [contour], -1, (0, 0, 255), 1)
                                 cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 0, 255), 1)
-                                log_event(message=f"ignoring motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
+                                #log_event(message=f"ignoring motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
                         else:
                             camera.motion_boxes_list.append([x1, y1, x2, y2])
                             if self.debug:
@@ -304,11 +304,12 @@ class NVR:
                                     overlay = frame.copy()
                                 cv2.drawContours(overlay, [contour], -1, (0, 255, 0), 1)
                                 cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), 1)
-                                log_event(message=f"motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
+                                #log_event(message=f"motion contour rect ({x1}, {y1}), ({x2}, {y2}) with area {area}")
                                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                                 tag = "_".join( camera.active_objects_set) if  camera.active_objects_set else "motion"
                                 image_filename = os.path.join(camera.images_dir, f"{timestamp}_{tag}.jpg")
                                 cv2.imwrite(image_filename, overlay)
+                                log_event(message=f"contour image written to {image_filename}", level="debug", camera=camera, file_path=image_filename)
 
             prev_gray = gray
 
@@ -399,9 +400,9 @@ class NVR:
     def make_status(self, recording: bool):
         idx = int(time.time() * 4) % 4
 
-        red_cycle = ["●", "◉", "○", "◉"]
-        green_cycle = ["●", "◉", "○", "◉"]
+        red_cycle = ["🔴", "🔴", "🟠", "🟠"]
+        green_cycle = ["🟢", "🟢", "⚪", "⚪"]
 
         pulse = red_cycle[idx] if recording else green_cycle[idx]
 
-        return f"{pulse} {'🔴 REC' if recording else '🟢 LIVE'}"
+        return f"{pulse}{' REC' if recording else ' LIVE'}"

@@ -10,7 +10,7 @@ from context import Context
 from nvr import NVR
 from camera import Camera
 
-logger = getLogger("portside-nvrs")
+logger = getLogger("nvr")
 
 class GUI:
     def __init__(self, ctx: Context, nvr: NVR):

@@ -5,7 +5,7 @@ import click
 from click import version_option
 from urllib.parse import urlparse, urlunparse
  
-from logger import setup_logging, log_event, event_log
+from logger import setup_logging, log_event, KeywordFilter
 from nvr import NVR
 from context import Context
 from model import Model
@@ -13,7 +13,7 @@ from gui import GUI
 from camera import Camera
 import constants
 
-logger = logging.getLogger("portside-nvrs")
+logger = logging.getLogger("nvr")
 
 def replace_url_credentials(url, new_username, new_password):
     parsed = urlparse(url)
@@ -86,7 +86,7 @@ def replace_url_credentials(url, new_username, new_password):
               default=constants.MOTION_DETECT_FRAME_COUNT,
               show_default=True)
 @click.option("--debug",
-              help="debug mode",
+              help="debug mode, produces .jpg files of motion contours",
               is_flag=True)
 
 @version_option()
@@ -104,8 +104,10 @@ def main(directory: str,
          ) -> int:
     
     setup_logging(logging_config)
+    if password is not None:
+        KeywordFilter.add_keyword(password)
 
-    logger.info(f"Application started with directory={directory} username={username} motion_threshold={motion_threshold} confidence_threshold={confidence_threshold} motion_detect_frame_count={motion_detect_frame_count}")
+    logger.info(f"Application started with directory={directory} username={username} password={password} motion_threshold={motion_threshold} confidence_threshold={confidence_threshold} motion_detect_frame_count={motion_detect_frame_count}")
 
     with open(nvr_config, 'r', encoding='utf-8') as f:
         config = json.load(f)
