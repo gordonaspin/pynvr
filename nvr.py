@@ -153,7 +153,7 @@ class NVR:
             stderr=log_file,
             bufsize=10**8
         )
-        atexit.register(process)
+        atexit.register(process.terminate)
         return process
 
     def _cleanup_segments(self):
