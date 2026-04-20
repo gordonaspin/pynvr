@@ -224,27 +224,30 @@ class GUI:
 
 
         demo.queue()
-        demo.launch(
-            #share=True,
-            #auth=[self.ctx.username, self.ctx.password],
-            server_name=self.ctx.bind_address,
-            theme=gr.themes.Soft(),
-            allowed_paths=[self.ctx.directory],
-            css="""
-    .mono-textbox textarea {
-        font-family: "Courier New", monospace !important;
-        font-size: x-small !important;
-    }
-    .custom-checkbox span {
-       font-family: 'Courier New', monospace !important;
-        font-size: small !important;
-    }
-    .gradio-container > footer,
-    .gradio-container footer,
-    footer,
-    div:has(> .footer) {
-        display: none !important;
-    }
-    """,
-            )
-        
+        try:
+            demo.launch(
+                #share=True,
+                #auth=[self.ctx.username, self.ctx.password],
+                server_name=self.ctx.bind_address,
+                theme=gr.themes.Soft(),
+                allowed_paths=[self.ctx.directory],
+                css="""
+                    .mono-textbox textarea {
+                        font-family: "Courier New", monospace !important;
+                        font-size: x-small !important;
+                    }
+                    .custom-checkbox span {
+                    font-family: 'Courier New', monospace !important;
+                        font-size: small !important;
+                    }
+                    .gradio-container > footer,
+                    .gradio-container footer,
+                    footer,
+                    div:has(> .footer) {
+                        display: none !important;
+                    }
+                    """,
+                )
+        except KeyboardInterrupt as e:
+            logger.info("Shutting down on CTRL-C")
+            demo.close()

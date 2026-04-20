@@ -2,7 +2,6 @@ import os
 import glob
 import time
 import subprocess
-import atexit
 import threading
 import queue
 from datetime import datetime, timedelta
@@ -62,6 +61,7 @@ class NVR:
     def __init__(self, ctx: Context, model: Model):
         self.ctx = ctx
         self.model = model
+        self.stop_event = threading.Event()
         self.debug = self.ctx.debug
         self.debug_files = self.ctx.debug_files
         self.width = ctx.downsize_resolution[0]
@@ -93,16 +93,24 @@ class NVR:
                 os.makedirs(camera.recordings_dir, exist_ok=True)
                 os.makedirs(camera.segments_dir, exist_ok=True)
                 os.makedirs(camera.images_dir, exist_ok=True)
-                log_event(message=f"starting recorder", level="info", camera=camera)
-                camera.process = self._start_segment_recorder(camera=camera)
+                self._start_camera(camera=camera)
                 threading.Thread(target=self._frame_reader, args=(camera,), daemon=True).start()
                 threading.Thread(target=self._process_frames,args=(camera,), daemon=True).start()
         threading.Thread(target=self._cleanup_segments,daemon=True).start()
 
-    def restart(self, camera):
+    def stop(self):
+        for camera in self.cameras.values():
+            if camera.enabled and camera.process is not None:
+                self._stop_camera(camera)
+
+    def _restart_camera(self, camera):
+        self._stop_camera(camera)
+        self._start_camera(camera)
+
+    def _stop_camera(self, camera):
         if camera.enabled and camera.process is not None:
             ret = camera.process.poll()
-            log_event(message=f"restarting recorder with ret {ret}", level="info", camera=camera)
+            log_event(message=f"stopping camera with ret {ret}", level="info", camera=camera)
             camera.process.terminate()
 
             try:
@@ -111,10 +119,10 @@ class NVR:
                 camera.process.kill()
             camera.process.stdout.close()
             camera.process.stdin.close()
-            camera.process = self._start_segment_recorder(camera=camera)
 
-    def _start_segment_recorder(self, camera: Camera):
+    def _start_camera(self, camera: Camera):
 
+        log_event(message=f"starting recorder", level="info", camera=camera)
         filespec = os.path.join(camera.segments_dir, "%Y%m%d_%H%M%S.ts")
         log_file = open(f"{camera.name}_ffmpeg.log", "w")
         ffmpeg_cmd = [
@@ -153,13 +161,13 @@ class NVR:
             stderr=log_file,
             bufsize=10**8
         )
-        atexit.register(process.terminate)
+        camera.process = process
         return process
 
     def _cleanup_segments(self):
         threading.current_thread().name = "cleanup_segments"
             
-        while True:
+        while True and not self.stop_event.is_set():
             try:
                 for camera in self.cameras.values():
                     if camera.enabled:
@@ -216,12 +224,12 @@ class NVR:
 
         frame_size = self.width * self.height * 3
 
-        while camera.running:
+        while not self.stop_event.is_set():
             raw = self._read_exact(camera.process.stdout, frame_size)
 
             if raw is None:
                 log_event(message="reader failed, restarting stream", level="warn", camera=camera)
-                self.restart(camera)
+                self._restart_camera(camera)
                 continue
 
             frame = np.frombuffer(raw, np.uint8).reshape((self.height, self.width, 3))
@@ -263,7 +271,7 @@ class NVR:
         prev_time = time.time()
         is_night = 0
 
-        while camera.running:
+        while not self.stop_event.is_set():
             # get latest frame (non-blocking)
             try:
                 frame = camera.frame_queue.get(timeout=0.5)

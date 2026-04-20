@@ -38,7 +38,6 @@ class Camera:
 
     # stream state
     process: Popen = None
-    running = True
 
     # latest-frame-wins buffer
     latest_frame: np.ndarray = None

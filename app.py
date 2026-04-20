@@ -1,4 +1,6 @@
-from asyncio import constants
+import atexit
+import signal
+import sys
 import json
 import re
 import logging
@@ -13,6 +15,16 @@ from model import Model
 from gui import GUI
 from camera import Camera
 import constants
+
+_NVR = None
+
+def shutdown(signum, frame):
+    _NVR.stop_event.set()
+    _NVR.stop()
+    sys.exit()
+
+signal.signal(signal.SIGINT, shutdown)
+signal.signal(signal.SIGTERM, shutdown)
 
 logger = logging.getLogger("nvr")
 
@@ -115,6 +127,7 @@ def main(directory: str,
          subtype: int,
          ) -> int:
     
+    global _NVR
     setup_logging(logging_config)
     if password is not None:
         KeywordFilter.add_keyword(password)
@@ -149,8 +162,9 @@ def main(directory: str,
     model = Model(ctx)
     logger.info(f"Model was trained with image size: {model.model.args['imgsz']}")
 
-    nvr = NVR(ctx, model)
+    _NVR = nvr = NVR(ctx, model)
     nvr.start()
+    atexit.register(nvr.stop)
 
     gui = GUI(ctx, nvr)
     gui.run()
