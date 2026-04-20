@@ -88,15 +88,16 @@ class NVR:
                                         )
 
     def start(self):
-        for camera in self.cameras.values():
-            if camera.enabled:
-                os.makedirs(camera.recordings_dir, exist_ok=True)
-                os.makedirs(camera.segments_dir, exist_ok=True)
-                os.makedirs(camera.images_dir, exist_ok=True)
-                self._start_camera(camera=camera)
-                threading.Thread(target=self._frame_reader, args=(camera,), daemon=True).start()
-                threading.Thread(target=self._process_frames,args=(camera,), daemon=True).start()
-        threading.Thread(target=self._cleanup_segments,daemon=True).start()
+        if not self.stop_event.is_set():
+            for camera in self.cameras.values():
+                if camera.enabled:
+                    os.makedirs(camera.recordings_dir, exist_ok=True)
+                    os.makedirs(camera.segments_dir, exist_ok=True)
+                    os.makedirs(camera.images_dir, exist_ok=True)
+                    self._start_camera(camera=camera)
+                    threading.Thread(target=self._frame_reader, args=(camera,), daemon=True).start()
+                    threading.Thread(target=self._process_frames,args=(camera,), daemon=True).start()
+            threading.Thread(target=self._cleanup_segments,daemon=True).start()
 
     def stop(self):
         for camera in self.cameras.values():
@@ -104,8 +105,10 @@ class NVR:
                 self._stop_camera(camera)
 
     def _restart_camera(self, camera):
-        self._stop_camera(camera)
-        self._start_camera(camera)
+        if not self.stop_event.is_set():
+            log_event(message="restarting camera", level="warn", camera=camera)
+            self._stop_camera(camera)
+            self._start_camera(camera)
 
     def _stop_camera(self, camera):
         if camera.enabled and camera.process is not None:
@@ -122,47 +125,48 @@ class NVR:
 
     def _start_camera(self, camera: Camera):
 
-        log_event(message=f"starting recorder", level="info", camera=camera)
-        filespec = os.path.join(camera.segments_dir, "%Y%m%d_%H%M%S.ts")
-        log_file = open(f"{camera.name}_ffmpeg.log", "w")
-        ffmpeg_cmd = [
-            "ffmpeg",
+        if not self.stop_event.is_set():
+            log_event(message=f"starting recorder", level="info", camera=camera)
+            filespec = os.path.join(camera.segments_dir, "%Y%m%d_%H%M%S.ts")
+            log_file = open(f"{camera.name}_ffmpeg.log", "w")
+            ffmpeg_cmd = [
+                "ffmpeg",
 
-            "-rtsp_transport", "tcp",           # Forces RTSP over TCP instead of UDP
-            "-fflags", "nobuffer+genpts",       # Disables internal buffering, generates PTS
-            "-flags", "low_delay",              # Tells decoder/demuxer to minimize delay (Reduces frame reordering buffers)
-            "-use_wallclock_as_timestamps", "1",# Uses system clock instead of stream timestamps (RTSP streams often have missing timestamps)
-            "-i", camera.url,                   # RTSP stream from camera
+                "-rtsp_transport", "tcp",           # Forces RTSP over TCP instead of UDP
+                "-fflags", "nobuffer+genpts",       # Disables internal buffering, generates PTS
+                "-flags", "low_delay",              # Tells decoder/demuxer to minimize delay (Reduces frame reordering buffers)
+                "-use_wallclock_as_timestamps", "1",# Uses system clock instead of stream timestamps (RTSP streams often have missing timestamps)
+                "-i", camera.url,                   # RTSP stream from camera
 
-            
-            "-filter_complex",                  # Split and reduce scale for raw only for OpenCV
-            f"[0:v]scale={self.width}:{self.height},format=bgr24[raw]", # re-scale and raw BGR pixel format (OpenCV native)
+                
+                "-filter_complex",                  # Split and reduce scale for raw only for OpenCV
+                f"[0:v]scale={self.width}:{self.height},format=bgr24[raw]", # re-scale and raw BGR pixel format (OpenCV native)
 
-            # ---- TS segments (NO RE-ENCODE) ----
-            "-map", "0:v",                      # original stream, unaltered
-            "-c", "copy",                       # No re-encoding (copy stream)
-            "-f", "segment",                    # enable segment muxer
-            "-segment_time", "1",               # target segment length 1 second
-            "-reset_timestamps", "0",           # don't reset timestamps
-            "-strftime", "1",                   # enable timestamp based filenames
-            "-segment_format", "mpegts",        # force mpeg-ts container
-            filespec,
+                # ---- TS segments (NO RE-ENCODE) ----
+                "-map", "0:v",                      # original stream, unaltered
+                "-c", "copy",                       # No re-encoding (copy stream)
+                "-f", "segment",                    # enable segment muxer
+                "-segment_time", "1",               # target segment length 1 second
+                "-reset_timestamps", "0",           # don't reset timestamps
+                "-strftime", "1",                   # enable timestamp based filenames
+                "-segment_format", "mpegts",        # force mpeg-ts container
+                filespec,
 
-            # ---- Raw frames (OpenCV) ----
-            "-map", "[raw]",                    # selects filtered (scaled + BGR) stream
-            "-f", "rawvideo",                   # outputs raw uncompressed frames
-            "pipe:1"                            # sends raw bytes to stdout
-        ]
+                # ---- Raw frames (OpenCV) ----
+                "-map", "[raw]",                    # selects filtered (scaled + BGR) stream
+                "-f", "rawvideo",                   # outputs raw uncompressed frames
+                "pipe:1"                            # sends raw bytes to stdout
+            ]
 
-        process =  subprocess.Popen(
-            ffmpeg_cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=log_file,
-            bufsize=10**8
-        )
-        camera.process = process
-        return process
+            process =  subprocess.Popen(
+                ffmpeg_cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=log_file,
+                bufsize=10**8
+            )
+            camera.process = process
+            return process
 
     def _cleanup_segments(self):
         threading.current_thread().name = "cleanup_segments"
@@ -228,7 +232,7 @@ class NVR:
             raw = self._read_exact(camera.process.stdout, frame_size)
 
             if raw is None:
-                log_event(message="reader failed, restarting stream", level="warn", camera=camera)
+                log_event(message="reader failed", level="warn", camera=camera)
                 self._restart_camera(camera)
                 continue
 
