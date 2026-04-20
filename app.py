@@ -1,5 +1,6 @@
 from asyncio import constants
 import json
+import re
 import logging
 import click
 from click import version_option
@@ -93,7 +94,11 @@ def replace_url_credentials(url, new_username, new_password):
 @click.option("--debug",
               help="debug mode, produces .jpg files of motion contours",
               is_flag=True)
-
+@click.option("--subtype",
+              help="rtsp subtype override",
+              type=click.IntRange(min=0, max=2),
+              default=0,
+              show_default=True)
 @version_option()
 
 # pylint: disable=too-many-branches, too-many-statements
@@ -107,6 +112,7 @@ def main(directory: str,
          confidence_threshold: float,
          motion_detect_frame_count: int,
          debug: bool,
+         subtype: int,
          ) -> int:
     
     setup_logging(logging_config)
@@ -122,7 +128,8 @@ def main(directory: str,
     downsize_resolution = config['downsize_resolution']
     camera_config = config['cameras']
     for camera in camera_config.values():
-        camera['url'] = replace_url_credentials(camera['url'], username, password)    
+        camera['url'] = replace_url_credentials(camera['url'], username, password)   
+        camera['url'] = re.sub("subtype=.", f"subtype={subtype}", camera['url']) 
 
     ctx = Context(
         directory=directory,
