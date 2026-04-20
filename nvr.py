@@ -119,30 +119,30 @@ class NVR:
         ffmpeg_cmd = [
             "ffmpeg",
 
-            "-rtsp_transport", "tcp",
-            "-fflags", "nobuffer",
-            "-flags", "low_delay",
-            "-use_wallclock_as_timestamps", "1",
-            "-i", camera.url,
+            "-rtsp_transport", "tcp",           # Forces RTSP over TCP instead of UDP
+            "-fflags", "nobuffer+genpts",       # Disables internal buffering, generates PTS
+            "-flags", "low_delay",              # Tells decoder/demuxer to minimize delay (Reduces frame reordering buffers)
+            "-use_wallclock_as_timestamps", "1",# Uses system clock instead of stream timestamps (RTSP streams often have missing timestamps)
+            "-i", camera.url,                   # RTSP stream from camera
 
-            # Split and reduce scale for raw only for OpenCV
-            "-filter_complex",
-            f"[0:v]scale={self.width}:{self.height},format=bgr24[raw]",
+            
+            "-filter_complex",                  # Split and reduce scale for raw only for OpenCV
+            f"[0:v]scale={self.width}:{self.height},format=bgr24[raw]", # re-scale and raw BGR pixel format (OpenCV native)
 
             # ---- TS segments (NO RE-ENCODE) ----
-            "-map", "0:v",
-            "-c", "copy",
-            "-f", "segment",
-            "-segment_time", "1",
-            "-reset_timestamps", "1",
-            "-strftime", "1",
-            "-segment_format", "mpegts",
+            "-map", "0:v",                      # original stream, unaltered
+            "-c", "copy",                       # No re-encoding (copy stream)
+            "-f", "segment",                    # enable segment muxer
+            "-segment_time", "1",               # target segment length 1 second
+            "-reset_timestamps", "0",           # don't reset timestamps
+            "-strftime", "1",                   # enable timestamp based filenames
+            "-segment_format", "mpegts",        # force mpeg-ts container
             filespec,
 
             # ---- Raw frames (OpenCV) ----
-            "-map", "[raw]",
-            "-f", "rawvideo",
-            "pipe:1"
+            "-map", "[raw]",                    # selects filtered (scaled + BGR) stream
+            "-f", "rawvideo",                   # outputs raw uncompressed frames
+            "pipe:1"                            # sends raw bytes to stdout
         ]
 
         process =  subprocess.Popen(
@@ -190,14 +190,18 @@ class NVR:
             (
                 FFmpeg()
                 .option("y")
+                .option("fflags", "+genpts")          # regenerate timestamps
                 .input(list_file, f="concat", safe=0)
                 .output(
                     output,
-                    c="libx264",
-                    pix_fmt="yuv420p",
-                    movflags="+faststart",
-                    preset="veryfast",
-                    crf=23
+                    c="libx264",                    # Re-encodes video using H.264 codec
+                    pix_fmt="yuv420p",              # Forces pixel format to 4:2:0 (required for iOS Safari, Android browsers, HTML5 <video>)
+                    movflags="+faststart",          # Moves MP4 metadata (moov atom) to the beginning
+                    preset="veryfast",              # Controls encoding speed vs compression efficiency (ultrafast → superfast → veryfast → faster → fast → medium → slow)
+                    crf=23,                         # Constant Rate Factor (quality control: 18 = visually lossless, 23 = default (balanced), 28+ = lower quality)
+                    vsync="cfr",                    # constant frame pacing
+                    r=20,                           # normalize FPS
+                    video_track_timescale=90000     # smoother playback on mobile (Sets MP4 timebase resolution, 90000 Standard MPEG clock (used in TS, RTP, etc.)
                 )
                 .execute()
             )
