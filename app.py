@@ -106,6 +106,9 @@ def replace_url_credentials(url, new_username, new_password):
 @click.option("--debug",
               help="debug mode, produces .jpg files of motion contours",
               is_flag=True)
+@click.option("--no-auth",
+              help="don't present the login screen",
+              is_flag=True)
 @click.option("--subtype",
               help="rtsp subtype override",
               type=click.IntRange(min=0, max=2),
@@ -124,6 +127,7 @@ def main(directory: str,
          confidence_threshold: float,
          motion_detect_frame_count: int,
          debug: bool,
+         no_auth: bool,
          subtype: int,
          ) -> int:
     
@@ -167,7 +171,7 @@ def main(directory: str,
     atexit.register(nvr.stop)
 
     gui = GUI(ctx, nvr)
-    gui.run()
+    gui.run(auth=not no_auth)
 
 if __name__ == "__main__":
     main()

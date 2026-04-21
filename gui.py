@@ -132,7 +132,7 @@ class GUI:
     def on_load(self):
         log_event(f"A browser has connected to the app")
 
-    def run(self):
+    def run(self, auth=True):
         # BUILD UI
         with gr.Blocks() as demo:
             gr.Markdown("## Portside Condominiums Security Cam Viewer")
@@ -227,7 +227,7 @@ class GUI:
         try:
             demo.launch(
                 #share=True,
-                #auth=[self.ctx.username, self.ctx.password],
+                auth=[self.ctx.username, self.ctx.password] if auth else None,
                 server_name=self.ctx.bind_address,
                 theme=gr.themes.Soft(),
                 allowed_paths=[self.ctx.directory],

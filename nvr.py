@@ -135,7 +135,7 @@ class NVR:
                 "-rtsp_transport", "tcp",           # Forces RTSP over TCP instead of UDP
                 "-fflags", "nobuffer+genpts",       # Disables internal buffering, generates PTS
                 "-flags", "low_delay",              # Tells decoder/demuxer to minimize delay (Reduces frame reordering buffers)
-                "-use_wallclock_as_timestamps", "1",# Uses system clock instead of stream timestamps (RTSP streams often have missing timestamps)
+                #"-use_wallclock_as_timestamps", "1",# Uses system clock instead of stream timestamps (RTSP streams often have missing timestamps)
                 "-i", camera.url,                   # RTSP stream from camera
 
                 
@@ -243,17 +243,21 @@ class NVR:
             if camera.last_frame_time > 0:
                 dt = now - camera.last_frame_time
 
-                # filter pipeline artifacts (VERY IMPORTANT)
-                if 0.01 < dt < 1.0:
+                # filter pipeline artifacts
+                if 0.02 < dt < 0.2:
                     inst_fps = 1.0 / dt
-                    camera.fps.update(inst_fps)
+                    camera.dt.update(dt)
+                    camera.fps.update(1.0 / camera.dt.value())
 
             camera.last_frame_time = now
 
             # latest-frame-wins
             if camera.frame_queue.full():
                 camera.frame_queue.get_nowait()
+                camera.total_drops += 1
             camera.frame_queue.put(frame)
+            camera.total_frames += 1
+            camera.drop_rate = camera.total_drops / camera.total_frames
 
     def _read_exact(self, pipe, size):
         buf = b""
@@ -423,11 +427,18 @@ class NVR:
 
             prev_time = time.time()
 
-            status = self.make_status(recording)
-            
+            parts = [self.make_status(recording)]
+            if is_night:
+                parts.append("Night")
+
+            parts.append(f"FPS {int(camera.fps.value())}:{camera.drop_rate:.2f}")
+            if camera.active_objects_set:
+                parts.append(",".join(camera.active_objects_set))
+
             camera.latest_frame = img
-            camera.status = f"{status} {"| Night " if is_night else ""}| FPS {int(camera.fps.value())}" + (f" | {",".join(camera.active_objects_set)}" if len(camera.active_objects_set) > 0 else "")
-            
+            camera.status = " | ".join(parts)            
+
+
     def make_status(self, recording: bool):
         idx = int(time.time() * 4) % 4
 

@@ -48,8 +48,12 @@ class Camera:
     diff_buf = None
     thresh_buf = None
 
-    # FPS tracking (IMPORTANT FIX: per-instance)
+    # FPS tracking
+    total_frames: int = 0
+    total_drops: int = 0
+    dt: RollingAverage = dataclasses.field(default_factory=lambda: RollingAverage(100))
     fps: RollingAverage = dataclasses.field(default_factory=lambda: RollingAverage(100))
+    drop_rate: float = 0.0
     last_frame_time: float = 0.0
 
     # UI / metadata
