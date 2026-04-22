@@ -5,17 +5,36 @@
         "model": "yolov8n.pt"
     },
     "cameras": {
-        "B67Lot": {
-            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+        "B1Lot": {
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=3&subtype=1",
+            "enabled": true
+        },
+        "B2Lot": {
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=4&subtype=1",
+            "enabled": true
+        },
+        "B3Lot": {
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=5&subtype=1",
+            "enabled": true
+        },
+        "Entrance": {
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "enabled": true
+        },
+        "Exit": {
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "enabled": true
+        },
+        "B45Lot": {
+            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=3&subtype=1",
             "enabled": true
         },
         "B56Lot": {
             "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=2&subtype=1",
             "enabled": true
-
         },
-        "B45Lot": {
-            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=3&subtype=1",
+        "B67Lot": {
+            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=1&subtype=1",
             "enabled": true
         },
         "Pool": {

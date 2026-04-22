@@ -1,4 +1,3 @@
-import torch
 from ultralytics import YOLO
 
 from context import Context

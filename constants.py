@@ -1,5 +1,4 @@
 """Constants"""
-import os
 from enum import Enum, auto
 # For retrying connection after timeouts and errors
 

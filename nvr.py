@@ -1,21 +1,21 @@
-import os
+from datetime import datetime, timedelta
 import glob
-import time
+from logging import getLogger
+import os
+import queue
 import subprocess
 import threading
-import queue
-from datetime import datetime, timedelta
-from logging import getLogger
+import time
+
 import cv2
+from ffmpeg import FFmpeg
 import torch
 import numpy as np
 
-from ffmpeg import FFmpeg
-
+from camera import Camera
 import constants
 from context import Context
 from logger import log_event
-from camera import Camera
 from model import Model
 
 logger = getLogger("nvr")

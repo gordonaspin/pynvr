@@ -1,9 +1,10 @@
-import dataclasses
-from subprocess import Popen
-import numpy as np
-from queue import Queue
-
 from collections import deque
+import dataclasses
+from queue import Queue
+from subprocess import Popen
+
+import numpy as np
+
 from model import Model
 
 class RollingAverage:

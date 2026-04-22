@@ -1,14 +1,15 @@
-import os
-from pathlib import Path
-from logging import getLogger
-import gradio as gr
 import html
+import os
+from logging import getLogger
+from pathlib import Path
 
-import constants
-from logger import log_event, event_log
-from context import Context
-from nvr import NVR
+import gradio as gr
+
 from camera import Camera
+import constants
+from context import Context
+from logger import log_event, event_log
+from nvr import NVR
 
 logger = getLogger("nvr")
 

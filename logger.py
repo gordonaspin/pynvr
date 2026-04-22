@@ -11,13 +11,12 @@ Public API
 - `MyJSONFormatter` — JSON formatter for structured logging.
 - `NonErrorFilter`, `KeywordFilter` — helpers to filter or mask logs.
 """
-import sys
 import atexit
-import threading
-from pathlib import Path
-from datetime import datetime
-import datetime as dt
+from datetime import datetime, timezone
 import json
+from pathlib import Path
+import sys
+import threading
 from logging import (
     getLogger,
     Logger,
@@ -29,13 +28,12 @@ from logging import (
     getHandlerByName,
     INFO
 )
-
 from typing import Any, Type, override
 from types import TracebackType
 
-logger = getLogger("nvr")
-
 import constants
+
+logger = getLogger("nvr")
 
 event_log = []
 
@@ -194,8 +192,8 @@ class MyJSONFormatter(Formatter):
         """
         always_fields: dict[str, str] = {
             "message": record.getMessage(),
-            "timestamp": dt.datetime.fromtimestamp(
-                record.created, tz=dt.timezone.utc
+            "timestamp": datetime.fromtimestamp(
+                record.created, tz=timezone.utc
             ).isoformat(),
         }
         if record.exc_info is not None:

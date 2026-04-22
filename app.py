@@ -4,17 +4,18 @@ import sys
 import json
 import re
 import logging
+from urllib.parse import urlparse, urlunparse
+
 import click
 from click import version_option
-from urllib.parse import urlparse, urlunparse
- 
-from logger import setup_logging, log_event, KeywordFilter
-from nvr import NVR
-from context import Context
-from model import Model
-from gui import GUI
+
 from camera import Camera
 import constants
+from context import Context
+from gui import GUI
+from logger import setup_logging, log_event, KeywordFilter
+from model import Model
+from nvr import NVR
 
 _NVR = None
 
