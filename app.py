@@ -140,7 +140,7 @@ def main(directory: str,
     with open(nvr_config, 'r', encoding='utf-8') as f:
         config = json.load(f)
 
-    yolo = config['yolo']
+    yolo_config = config['yolo']
     downsize_resolution = config['downsize_resolution']
     camera_config = config['cameras']
     for camera in camera_config.values():
@@ -157,8 +157,8 @@ def main(directory: str,
         confidence_threshold=confidence_threshold,
         motion_detect_frame_count=motion_detect_frame_count,
         downsize_resolution=downsize_resolution,
-        model='yolov8n.pt',
-        classes=yolo['classes'],
+        model=yolo_config['model'],
+        classes=yolo_config['classes'],
         debug=debug,
     )
 
