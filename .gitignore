@@ -214,3 +214,4 @@ recordings/
 *.pt
 *.log*
 nvr.json
+.gradio
