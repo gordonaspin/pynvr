@@ -113,7 +113,7 @@ def replace_url_credentials(url, new_username, new_password):
 @click.option("--subtype",
               help="rtsp subtype override",
               type=click.IntRange(min=0, max=2),
-              default=0,
+              default=1,
               show_default=True)
 @version_option()
 
