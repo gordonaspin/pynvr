@@ -2,6 +2,7 @@ import html
 import os
 from logging import getLogger
 from pathlib import Path
+from datetime import datetime
 
 import gradio as gr
 
@@ -90,8 +91,15 @@ class GUI:
         </div>
         """
 
-    def get_recordings_html(self):
-        """ writes the list of links of recordings """
+    def get_tags(self, filename):
+        """ gets the tags for a given filename and removes the date/time tags """
+        name = os.path.splitext(filename)[0]
+        tags = name.split('_')
+        tags.sort()
+        return tags[2:]
+
+    def get_recordings(self):
+        """ returns array of [camera, link, tags, timestamp] for gr.Dataframe """
         files = []
 
         for r, _, f in os.walk(self.nvr.recordings_dir):
@@ -102,42 +110,31 @@ class GUI:
         try:
             files.sort(key=os.path.getmtime, reverse=True)
         except FileNotFoundError:
-            return "<div>Loading...</div>"
+            return []
 
         files = files[:constants.MAX_LOG_LINES]
 
-        html_content = """
-        <div style="
-            height: 300px;
-            overflow-y: auto;
-            border: 1px solid #ccc;
-            padding: 5px;
-            font-family: monospace;
-            font-size: 12px;
-            background-color: #1e1e1e;
-            color: #ffffff;
-        ">
-            <div style="font-weight: bold; margin-bottom: 8px; font-size: medium;">
-                🎥 Recordings
-            </div>
-        """
-
+        rows = []
         for f in files:
             p = Path(f)
 
             # escape display text (important for safety)
-            label = html.escape(f"{p.parent.name}/{p.name}")
-            label = f"{p.parent.name}/{p.name}"
+            label = html.escape(f"{p.name}")
 
-            html_content += (
+            link = (
                 f'<a href="/gradio_api/file={f}" '
                 f'target="_blank" '
-                f'style="color:white; text-decoration:underline;">{label}</a><br>'
+                f'style="color:white; text-decoration:underline;">{label}</a>'
             )
 
-        html_content += "</div>"
+            rows.append([
+                p.parent.name,
+                link,
+                self.get_tags(p.name),
+                datetime.fromtimestamp(os.path.getmtime(p)).strftime("%Y-%m-%d %H:%M:%S")
+            ])
 
-        return html_content
+        return rows
 
     def on_load(self):
         """ called when the GUI loads for a client """
@@ -148,6 +145,7 @@ class GUI:
         with gr.Blocks() as demo:
             gr.Markdown("## Portside Condominiums Security Cam Viewer")
 
+            # Controls
             with gr.Accordion("Controls", open=False):
                 with gr.Row():
                     with gr.Column(scale=1):
@@ -188,6 +186,7 @@ class GUI:
                 debug_checkbox.change(fn=self.update_debug, inputs=debug_checkbox,  outputs=[])
                 files_checkbox.change(fn=self.update_debug_files, inputs=files_checkbox,  outputs=[])
 
+            # Cameras
             outputs = []
             for i in range(0, int(len(self.nvr.cameras)/5)):
                 with gr.Row():
@@ -208,22 +207,25 @@ class GUI:
                                 hd_checkbox.change(fn=self.update_hd, inputs=[gr.State(value=camera.name), hd_checkbox],  outputs=[])
                                 outputs.append((annotated, stats_box, camera))
 
+            # recordings dataframe
             with gr.Row():
-                with gr.Column(scale=2):
-                    # Event log HTML
-                    log_box = gr.HTML(label="Event Log")
-                    timer = gr.Timer(0.5)  # update every 0.5s
-                    timer.tick(fn=self.get_log_html, outputs=log_box)
+                recordings_table = gr.Dataframe(label="Recordings",
+                                        headers=["Camera", "File Link", "Tags", "Date"],
+                                        datatype=["str", "html", "str", "str"],
+                                        value=[],   # start empty
+                                        interactive=False,
+                )
+                timer = gr.Timer(2.0)  # update every 2.0s
+                timer.tick(fn=self.get_recordings, outputs=recordings_table)
 
-                with gr.Column(scale=1):
-                    # recordings HTML
-                    recordings_box = gr.HTML(label="All Recordings")
-                    timer = gr.Timer(2.0)  # update every 2.0s
-                    timer.tick(fn=self.get_recordings_html, outputs=recordings_box)
+            # Event log HTML
+            with gr.Row():
+                log_box = gr.HTML(label="Event Log")
+                timer = gr.Timer(1.0)  # update every 0.5s
+                timer.tick(fn=self.get_log_html, outputs=log_box)
 
-            timer = gr.Timer(1.0/20.0)
-            
             # Image streams
+            timer = gr.Timer(1.0/20.0)            
             for annotated, stats, camera in outputs:
                 timer.tick(
                     fn=lambda c=camera: self.get_frame(c),
