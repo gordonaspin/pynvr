@@ -80,7 +80,7 @@ class GUI:
             border:1px solid #ccc;
             padding:5px;
             font-family:monospace;
-            font-size:12px;
+            font-size:xsmall;
             background-color:#1e1e1e;
             color:#ffffff;
         ">
@@ -209,7 +209,7 @@ class GUI:
 
             # recordings dataframe
             with gr.Row():
-                recordings_table = gr.Dataframe(label="Recordings",
+                recordings_table = gr.Dataframe(label="🎥 Recordings",
                                         headers=["Camera", "File Link", "Tags", "Date"],
                                         datatype=["str", "html", "str", "str"],
                                         value=[],   # start empty
@@ -220,7 +220,7 @@ class GUI:
 
             # Event log HTML
             with gr.Row():
-                log_box = gr.HTML(label="Event Log")
+                log_box = gr.HTML()
                 timer = gr.Timer(1.0)  # update every 0.5s
                 timer.tick(fn=self.get_log_html, outputs=log_box)
 

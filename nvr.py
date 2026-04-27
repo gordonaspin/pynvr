@@ -111,6 +111,7 @@ class NVR:
                     threading.Thread(target=self._frame_reader, args=(camera,), daemon=True).start()
                     threading.Thread(target=self._process_frames,args=(camera,), daemon=True).start()
             threading.Thread(target=self._cleanup_segments,daemon=True).start()
+            threading.Thread(target=self._watch_cameras,daemon=True).start()
 
     def stop(self):
         """
@@ -143,7 +144,6 @@ class NVR:
             except subprocess.TimeoutExpired:
                 camera.process.kill()
             camera.process.stdout.close()
-            camera.process.stdin.close()
             camera.first_frame = True
 
     def _start_camera(self, camera: Camera):
@@ -155,16 +155,16 @@ class NVR:
         if not self.stop_event.is_set():
             log_event(message=f"starting recorder", level="info", camera=camera)
             filespec = os.path.join(camera.segments_dir, "%Y%m%d_%H%M%S.ts")
-            log_file = open(f"{camera.name}_ffmpeg.log", "w")
             ffmpeg_cmd = [
                 "ffmpeg",
 
                 "-rtsp_transport", "tcp",           # Forces RTSP over TCP instead of UDP
                 "-fflags", "nobuffer+genpts",       # Disables internal buffering, generates PTS
                 "-flags", "low_delay",              # Tells decoder/demuxer to minimize delay (Reduces frame reordering buffers)
-                #"-use_wallclock_as_timestamps", "1",# Uses system clock instead of stream timestamps (RTSP streams often have missing timestamps)
                 "-i", camera.url,                   # RTSP stream from camera
-
+                "-hide_banner",
+                "-loglevel", "error",               # ONLY errors (no frame spam)
+                "-nostats",
                 
                 "-filter_complex",                  # Split and reduce scale for raw only for OpenCV
                 f"[0:v]scale={self.width}:{self.height},format=bgr24[raw]", # re-scale and raw BGR pixel format (OpenCV native)
@@ -184,19 +184,25 @@ class NVR:
                 "-f", "rawvideo",                   # outputs raw uncompressed frames
                 "pipe:1"                            # sends raw bytes to stdout
             ]
-            try:
-                process =  subprocess.Popen(
-                    ffmpeg_cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=log_file,
-                    bufsize=10**8
-                )
-                camera.process = process
-            finally:
-                log_file.close()
-                
+            process =  subprocess.Popen(
+                ffmpeg_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                bufsize=0
+            )
+            camera.process = process
+
             return process
+
+    def _watch_cameras(self):
+        """ check each ffmpeg process every 5 seconds and restart if necessary """
+        while not self.stop_event.is_set():
+            time.sleep(5)
+            for camera in self.cameras.values():
+                if camera.process and camera.process.poll() is not None:
+                    log_event("ffmpeg died, restarting", "error", camera=camera)
+                    self._restart_camera(camera)
 
     def _cleanup_segments(self):
         """
