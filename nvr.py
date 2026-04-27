@@ -61,6 +61,49 @@ def _keep_overlapping_any(boxes, ref_boxes):
     # 4. Keep if overlaps ANY ROI
     return overlap.any(dim=1)
 
+def get_dominant_color_name(roi_bgr):
+    if roi_bgr.size == 0:
+        return "unknown"
+
+    # Convert to HSV
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+
+    # Flatten pixels
+    pixels = hsv.reshape(-1, 3)
+
+    # Filter out low saturation (removes white/gray/black)
+    pixels = pixels[pixels[:,1] > 40]
+
+    if len(pixels) == 0:
+        return "gray"
+
+    # Take hue channel
+    hues = pixels[:,0]
+
+    # Compute histogram
+    hist = np.bincount(hues, minlength=180)
+
+    dominant_hue = np.argmax(hist)
+
+    # Map hue to color
+    return hue_to_color_name(dominant_hue)
+    
+def hue_to_color_name(h):
+    if h < 10 or h >= 170:
+        return "red"
+    elif h < 25:
+        return "orange"
+    elif h < 35:
+        return "yellow"
+    elif h < 85:
+        return "green"
+    elif h < 125:
+        return "blue"
+    elif h < 160:
+        return "purple"
+    else:
+        return "pink"
+
 # =========================
 # NVR ENGINE
 # =========================
@@ -471,9 +514,13 @@ class NVR:
                 keep = _keep_overlapping_any(boxes, ref_motion_boxes_list)
                 boxes = result.boxes[keep]
 
-                # store the name/class of object we saw in the frame that coincides with movement
+                # store the color and name/class of object we saw in the frame that coincides with movement
                 for box in boxes:
-                    camera.classes_in_frame_set.add(self.model.model.names[int(box.cls)])
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    roi = frame_bgr[y1:y2, x1:x2]
+                    color = get_dominant_color_name(roi)
+                    class_name = self.model.model.names[int(box.cls)]
+                    camera.classes_in_frame_set.add(f"{color}-{class_name}")
 
             # counters, we need motion (or no motion) for a number of consecutive frames to care
             if camera.motion_boxes_list:
@@ -599,3 +646,4 @@ class NVR:
                 keep_contours.append(contour)
         
         return keep_rects, keep_contours, discard_small_rects, discard_small_contours, discard_angular_rects, discard_angular_contours
+    
