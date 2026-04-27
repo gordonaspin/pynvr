@@ -184,15 +184,18 @@ class NVR:
                 "-f", "rawvideo",                   # outputs raw uncompressed frames
                 "pipe:1"                            # sends raw bytes to stdout
             ]
-
-            process =  subprocess.Popen(
-                ffmpeg_cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=log_file,
-                bufsize=10**8
-            )
-            camera.process = process
+            try:
+                process =  subprocess.Popen(
+                    ffmpeg_cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=log_file,
+                    bufsize=10**8
+                )
+                camera.process = process
+            finally:
+                log_file.close()
+                
             return process
 
     def _cleanup_segments(self):
