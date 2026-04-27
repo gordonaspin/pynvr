@@ -61,6 +61,105 @@ def _keep_overlapping_any(boxes, ref_boxes):
     # 4. Keep if overlaps ANY ROI
     return overlap.any(dim=1)
 
+import cv2
+import numpy as np
+
+def detect_object_color(roi_bgr, k=3):
+    if roi_bgr is None or roi_bgr.size == 0:
+        return "unknown"
+
+    h, w = roi_bgr.shape[:2]
+
+    # -----------------------------
+    # 1. Crop center (reduce background)
+    # -----------------------------
+    pad = 0.2
+    roi = roi_bgr[
+        int(h*pad):int(h*(1-pad)),
+        int(w*pad):int(w*(1-pad))
+    ]
+
+    if roi.size == 0:
+        return "unknown"
+
+    # -----------------------------
+    # 2. Resize for speed
+    # -----------------------------
+    roi = cv2.resize(roi, (64, 64))
+
+    # -----------------------------
+    # 3. Convert to LAB (better color distance)
+    # -----------------------------
+    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB)
+    pixels = lab.reshape((-1, 3)).astype(np.float32)
+
+    # -----------------------------
+    # 4. K-means clustering
+    # -----------------------------
+    _, labels, centers = cv2.kmeans(
+        pixels,
+        k,
+        None,
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0),
+        5,
+        cv2.KMEANS_RANDOM_CENTERS
+    )
+
+    # Count cluster sizes
+    counts = np.bincount(labels.flatten())
+
+    # Sort clusters by dominance
+    sorted_idx = np.argsort(-counts)
+
+    for idx in sorted_idx:
+        color_lab = centers[idx]
+
+        # Convert LAB → BGR → HSV for classification
+        color_bgr = cv2.cvtColor(
+            np.uint8([[color_lab]]),
+            cv2.COLOR_LAB2BGR
+        )[0][0]
+
+        color_name = classify_color(color_bgr)
+
+        if color_name != "unknown":
+            return color_name
+
+    return "unknown"
+
+def classify_color(bgr):
+    b, g, r = bgr
+    hsv = cv2.cvtColor(np.uint8([[bgr]]), cv2.COLOR_BGR2HSV)[0][0]
+    h, s, v = hsv
+
+    # -----------------------------
+    # Handle neutrals first
+    # -----------------------------
+    if v < 50:
+        return "black"
+    if s < 40:
+        if v > 200:
+            return "white"
+        return "gray"
+
+    # -----------------------------
+    # Hue-based classification
+    # -----------------------------
+    if h < 10 or h >= 170:
+        return "red"
+    elif h < 25:
+        return "orange"
+    elif h < 35:
+        return "yellow"
+    elif h < 85:
+        return "green"
+    elif h < 125:
+        return "blue"
+    elif h < 155:
+        return "purple"
+    else:
+        return "pink"
+
 def get_dominant_color_name(roi_bgr):
     if roi_bgr.size == 0:
         return "unknown"
@@ -518,7 +617,7 @@ class NVR:
                 for box in boxes:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     roi = frame_bgr[y1:y2, x1:x2]
-                    color = get_dominant_color_name(roi)
+                    color = detect_object_color(roi)
                     class_name = self.model.model.names[int(box.cls)]
                     camera.classes_in_frame_set.add(f"{color}-{class_name}")
 
