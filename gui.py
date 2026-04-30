@@ -120,14 +120,15 @@ class GUI:
     # ------------------------------------------------------------
     def draw_timeline(self):
 
-        def tag_color(tags):
+        def tag_colors(tags):
+            colors = []
             if isinstance(tags, dict):
-                b = next(iter(tags.items())) if tags else None
-                b = b[0] if b else None
+                for obj, _ in tags.items():
+                    colors.append(self.color_map.get(obj, "#9E9E9E"))
             else:
-                a = tags[0] if tags else None
-                b = a[0] if a else None
-            return self.color_map.get(b, "#9E9E9E") if tags else "#9E9E9E"
+                for tag in tags:
+                    colors.append(self.color_map.get(tag[0], "#9E9E9E"))
+            return colors
 
         def tag_label(tags):
             objects = [f"{obj}({color})" for obj, color in tags]
@@ -213,9 +214,10 @@ class GUI:
                 left = label_width + int((e["start_time"] - start) / span * (width - label_width - 20))
                 right = label_width + int((e["end_time"] - start) / span * (width - label_width - 20))
 
-                color = tag_color(e["tags"])
+                colors = tag_colors(e["tags"])
+                for i, color in enumerate(colors):
+                    draw.rectangle([left, y_top + 5 + i * (y_bottom - y_top - 5) // len(colors), right, y_bottom], fill=color)
 
-                draw.rectangle([left, y_top + 5, right, y_bottom], fill=color)
                 metadata_str = f"<a href=\"/gradio_api/file={e['metadata']}\" target=\"_blank\">View</a>" if e.get("metadata") else "N/A"
                 info_html = f"""
                 <b>Camera:</b> {camera} | 
@@ -335,6 +337,11 @@ class GUI:
                     outputs=[selected_video, event_info]
                 )
 
+                # Initial render
+                img, regions = self.draw_timeline()
+                timeline_img.value = img
+                regions_state.value = regions
+
                 # Timer updates the timeline every 5 seconds
                 def refresh():
                     img, regions = self.draw_timeline()
@@ -343,10 +350,7 @@ class GUI:
                 timer = gr.Timer(5)
                 timer.tick(fn=refresh, inputs=None, outputs=[timeline_img, regions_state])
 
-                # Initial render
-                img, regions = self.draw_timeline()
-                timeline_img.value = img
-                regions_state.value = regions
+
 
     
             # Event log HTML
