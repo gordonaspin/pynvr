@@ -1,4 +1,4 @@
-from collections import deque
+from collections import deque, defaultdict
 import dataclasses
 from queue import Queue
 from subprocess import Popen
@@ -26,7 +26,7 @@ class RollingAverage:
         if not self.window:
             return 0.0
         return self.sum / len(self.window)
-    
+
 @dataclasses.dataclass
 class Camera:
     name: str
@@ -36,6 +36,7 @@ class Camera:
     segments_dir: str
     images_dir: str
     model: Model
+    debug: bool = False
 
     # stream state
     process: Popen = None
@@ -48,7 +49,9 @@ class Camera:
     # buffers for cv2 frames
     gray_buf = None
     diff_buf = None
+    diff_blur_buf = None
     thresh_buf = None
+    background_buf = None
 
     # FPS tracking
     total_frames: int = 0
@@ -56,20 +59,22 @@ class Camera:
     dt: RollingAverage = dataclasses.field(default_factory=lambda: RollingAverage(100))
     fps: RollingAverage = dataclasses.field(default_factory=lambda: RollingAverage(100))
     drop_rate: float = 0.0
-    last_frame_time: float = time.time()
+    last_frame_time: float = 0.0
 
     # UI / metadata
     hd: bool = True
     status: str = "Not streaming"
 
     # logic state
-    last_event_time: float = time.time()
-    last_night_time_check: float = time.time()
-    last_yolo_time: float = time.time()
+    last_event_time: float = 0.0
+    last_night_time_check: float = 0.0
+    last_yolo_time: float = 0.0
 
     # motion detection
     motion_boxes_list: list = dataclasses.field(default_factory=list)
-    classes_in_frame_set: set = dataclasses.field(default_factory=set)
-    active_objects_set: set = dataclasses.field(default_factory=set)
+    classes_in_frame_dict: defaultdict = dataclasses.field(default_factory=lambda: defaultdict(set))
+    active_objects_dict: defaultdict = dataclasses.field(default_factory=lambda: defaultdict(set))
     active_segments_list: list = dataclasses.field(default_factory=list)
-    
+    motion_condfidence: float = 0.0
+    debug_motion_image: np.ndarray = None
+

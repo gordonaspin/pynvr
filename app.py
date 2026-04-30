@@ -110,7 +110,7 @@ def replace_url_credentials(url, new_username, new_password):
               default=constants.MOTION_DETECT_FRAME_COUNT,
               show_default=True)
 @click.option("--debug",
-              help="debug mode, produces .jpg files of motion contours",
+              help="debug mode",
               is_flag=True)
 @version_option()
 

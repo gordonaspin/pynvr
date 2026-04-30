@@ -49,7 +49,7 @@ def log_event(message, level="info", camera=None, file_path=None):
     fstr = f"{camera.name + " " if camera else ""}{message}"
     match level:
         case "info": logger.info(fstr)
-        case "debug": logger.info(fstr)
+        case "debug": logger.debug(fstr)
         case "warn": logger.warning(fstr)
         case "error": logger.error(fstr)
         case "record": logger.info(fstr)
