@@ -211,7 +211,7 @@ class GUI:
 
             # Draw events
             for e in grouped_events[camera]:
-                left = label_width + int((e["start_time"] - start) / span * (width - label_width - 20))
+                left = label_width + max(0, int((e["start_time"] - start) / span * (width - label_width - 20)))
                 right = label_width + int((e["end_time"] - start) / span * (width - label_width - 20))
 
                 colors = tag_colors(e["tags"])
@@ -227,6 +227,9 @@ class GUI:
                 <b>Metadata:</b> {metadata_str}
                 """
                 clickable_regions.append((left, y_top+5, right, y_bottom, e["output"], info_html))                # Tooltip
+
+        for index, (cls, color) in enumerate(self.color_map.items()):
+            draw.text((label_width + index * 80, y_bottom + 20), cls, font=self.courier_font, fill=color)
 
         return img, clickable_regions
 
