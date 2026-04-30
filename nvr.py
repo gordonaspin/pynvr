@@ -421,7 +421,7 @@ class NVR:
             jsondata_file = output + ".json"
             tags_str = self._tags_to_str(tags)
             if self.debug:
-                log_event(message=f"merging segments {len(segments)} {tags_str} to {output}", level="debug", camera=camera, file_path=output)
+                log_event(message=f"merging {len(segments)} segments {tags_str} to {output}", level="debug", camera=camera, file_path=output)
             
             # Convert to a standard dict and sets to lists
             serializable_tags = {k: list(v) for k, v in tags.items()}

@@ -122,8 +122,8 @@ class GUI:
 
         def tag_color(tags):
             if isinstance(tags, dict):
-                a = next(iter(tags.values())) if tags else None
-                b = a[0] if a else None
+                b = next(iter(tags.items())) if tags else None
+                b = b[0] if b else None
             else:
                 a = tags[0] if tags else None
                 b = a[0] if a else None
@@ -135,9 +135,10 @@ class GUI:
         
         grouped_events = self.nvr.load_events()
 
-        # Limit to past 24 hours
+        hours = 4
+        # Limit to past 4 hours
         now = datetime.now().timestamp()
-        window_start = now - 4 * 3600
+        window_start = now - hours * 3600
 
         # Filter events to only those in the last 24 hours
         filtered = {}
@@ -183,7 +184,7 @@ class GUI:
         draw.rectangle([label_width, scale_top, width - 10, scale_bottom], fill="#2d3748")
 
         # Hour ticks
-        for hour in range(25):  # 0..24
+        for hour in range(hours + 1):  # 0..n hours
             t = start + hour * 3600
             x = label_width + int((t - start) / span * (width - label_width - 20))
 
@@ -195,7 +196,7 @@ class GUI:
             draw.text((x + 2, scale_top + 2), label, fill="white")
 
         for idx, camera in enumerate(cameras):
-            y_top = scale_bottom +self.padding + idx * self.row_height
+            y_top = scale_bottom + self.padding + idx * self.row_height
             y_bottom = y_top + self.row_height - 5
 
             # Draw camera label
@@ -316,7 +317,7 @@ class GUI:
             with gr.Row():
                 selected_video = gr.Textbox(visible=False)
                 with gr.Column():
-                    timeline_img = gr.Image(type="pil", interactive=False, label="Timeline")
+                    timeline_img = gr.Image(type="pil", interactive=False, label="Timeline", buttons=[], container=True)
                 with gr.Column():
                     video_player = gr.Video(label="Selected Video", height=self.get_height(), autoplay=True, interactive=False)
                     event_info = gr.HTML(label="Event Info")
