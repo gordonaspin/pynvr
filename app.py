@@ -89,13 +89,10 @@ def replace_url_credentials(url, new_username, new_password):
               default="logging-config.json",
               show_default=True)
 @click.option("--motion-threshold",
-              help="threshold for motion detection (day, night)",
-              type=click.Tuple([
-                  click.IntRange(min=constants.MOTION_THRESHOLD_MIN[0], max=constants.MOTION_THRESHOLD_MAX[0]),
-                  click.IntRange(min=constants.MOTION_THRESHOLD_MIN[1], max=constants.MOTION_THRESHOLD_MAX[1])
-                  ]),
+              help="percent change in pixels for motion detection",
+              type=click.FloatRange(min=constants.MOTION_THRESHOLD_MIN, max=constants.MOTION_THRESHOLD_MAX),
               metavar="<threshold>",
-              default=(constants.MOTION_THRESHOLD[0], constants.MOTION_THRESHOLD[1]),
+              default=constants.MOTION_THRESHOLD,
               show_default=True)
 @click.option("--confidence-threshold",
               help="Confidence threshold for object detection",
@@ -123,7 +120,7 @@ def main(directory: str,
          nvr_config: str,
          bind_address: str,
          logging_config: str,
-         motion_threshold: tuple[int, int],
+         motion_threshold: float,
          confidence_threshold: float,
          motion_detect_frame_count: int,
          debug: bool,
@@ -140,7 +137,7 @@ def main(directory: str,
         config = json.load(f)
 
     yolo_config = config['yolo']
-    downsize_resolution = config['downsize_resolution']
+    resolution = config['resolution']
     camera_config = config['cameras']
     if username and password:
         for camera in camera_config.values():
@@ -154,10 +151,10 @@ def main(directory: str,
         gui_password=gui_password,
         camera_config=camera_config,
         bind_address=bind_address,
-        motion_threshold=[motion_threshold[0], motion_threshold[1]],
+        motion_threshold=motion_threshold,
         confidence_threshold=confidence_threshold,
         motion_detect_frame_count=motion_detect_frame_count,
-        downsize_resolution=downsize_resolution,
+        resolution=resolution,
         model=yolo_config['model'],
         classes=yolo_config['classes'],
         debug=debug,

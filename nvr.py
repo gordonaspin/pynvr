@@ -7,7 +7,7 @@ from logging import getLogger
 import os
 import queue
 import subprocess
-import threading
+from threading import Thread, Event, current_thread
 import time
 from math import sqrt
 
@@ -23,6 +23,7 @@ import constants
 from context import Context
 from logger import log_event
 from model import Model
+from profile import MotionProfile
 
 logger = getLogger("nvr")
 
@@ -229,22 +230,23 @@ class NVR:
     def __init__(self, ctx: Context):
         self.ctx = ctx
         self.model = Model(ctx)
-        self.stop_event = threading.Event()
-        self.debug = self.ctx.debug
-        self.debug_files = self.ctx.debug_files
-        self.width = ctx.downsize_resolution[0]
-        self.height = ctx.downsize_resolution[1]
-        self.motion_threshold = self.ctx.motion_threshold
-        self.confidence_threshold = self.ctx.confidence_threshold
-        self.selected_classes = self.model.class_to_index(ctx.classes)
+        self.stop_event: Event = Event()
+        self.debug: bool = self.ctx.debug
+        self.debug_files: bool = self.ctx.debug_files
+        self.width: int = ctx.resolution[0]
+        self.height: int = ctx.resolution[1]
+        self.max_pixels = self.width * self.height
+        self.motion_threshold: float = self.ctx.motion_threshold
+        self.confidence_threshold: float = self.ctx.confidence_threshold
+        self.selected_classes: list[int] = self.model.class_to_index(ctx.classes)
 
-        self.recordings_dir = ctx.directory
-        self.segments_dir = os.path.join(self.recordings_dir, "segments")
-        self.images_dir = os.path.join(self.recordings_dir, "images")
+        self.recordings_dir: str = ctx.directory
+        self.segments_dir: str = os.path.join(self.recordings_dir, "segments")
+        self.images_dir: str = os.path.join(self.recordings_dir, "images")
         os.makedirs(self.recordings_dir, exist_ok=True)
         os.makedirs(self.segments_dir, exist_ok=True)
         os.makedirs(self.images_dir, exist_ok=True)
-        self.cameras = {}
+        self.cameras: dict[str, Camera] = {}
         for name, cfg in ctx.camera_config.items():
             self.cameras[name] = Camera(name=name,
                                         url=cfg['url'],
@@ -269,10 +271,10 @@ class NVR:
                     os.makedirs(camera.segments_dir, exist_ok=True)
                     os.makedirs(camera.images_dir, exist_ok=True)
                     self._start_camera(camera=camera)
-                    threading.Thread(target=self._frame_reader, args=(camera,), daemon=True).start()
-                    threading.Thread(target=self._process_frames,args=(camera,), daemon=True).start()
-            threading.Thread(target=self._cleanup_segments,daemon=True).start()
-            threading.Thread(target=self._watch_cameras,daemon=True).start()
+                    Thread(target=self._frame_reader, args=(camera,), daemon=True).start()
+                    Thread(target=self._process_frames,args=(camera,), daemon=True).start()
+            Thread(target=self._cleanup_segments,daemon=True).start()
+            Thread(target=self._watch_cameras,daemon=True).start()
 
     def stop(self):
         """
@@ -369,7 +371,7 @@ class NVR:
         """
         Thread that periodically deletes old segment files for all cameras
         """
-        threading.current_thread().name = "cleanup_segments"
+        current_thread().name = "cleanup_segments"
             
         while True and not self.stop_event.is_set():
             try:
@@ -421,7 +423,7 @@ class NVR:
             jsondata_file = output + ".json"
             tags_str = self._tags_to_str(tags)
             if self.debug:
-                log_event(message=f"merging {len(segments)} segments {tags_str} to {output}", level="debug", camera=camera, file_path=output)
+                log_event(message=f"merging {len(segments)} xsegments {tags_str} to {output}", level="debug", camera=camera, file_path=output)
             
             # Convert to a standard dict and sets to lists
             serializable_tags = {k: list(v) for k, v in tags.items()}
@@ -476,9 +478,28 @@ class NVR:
                 os.remove(list_file)
                 self._merge_complete(camera, tags, output)
 
-        thread = threading.Thread(target=worker, daemon=True)
+        thread = Thread(target=worker, daemon=True)
         thread.start()
         return thread
+
+    def get_motion_threshold(self, is_night: bool):
+        if is_night:
+            return MotionProfile(
+                name="night",
+                motion_threshold=int(self.motion_threshold * 1.5),     # 50% higher
+                min_solidity=0.70,                                     # stricter
+                min_area_ratio=0.003,                                  # larger min area
+                yolo_conf=min(0.6, self.confidence_threshold + 0.15),  # stricter YOLO
+                motion_confidence_min=0.50,                            # require stronger motion
+            )
+        return MotionProfile(
+        name="day",
+        motion_threshold=self.motion_threshold,
+        min_solidity=0.50,
+        min_area_ratio=0.002,
+        yolo_conf=self.confidence_threshold,
+        motion_confidence_min=0.35,
+    )
 
     def _tags_to_str(self, tags: defaultdict[set]):
         parts = []
@@ -522,7 +543,7 @@ class NVR:
         replaced with the new frame. This means we drop frames to keep up. This is only for
         image processing, frames written to segments are not dropped
         """
-        threading.current_thread().name = f"{camera.name} _frame_reader"
+        current_thread().name = f"{camera.name} _frame_reader"
 
         frame_size = self.width * self.height * 3
 
@@ -591,7 +612,7 @@ class NVR:
         15. if there was motion, merge the image and overlay
         16. store the image and status in the camera object, the GUI will read this image and status at whatever rate it wants
         """
-        threading.current_thread().name = f"{camera.name} _process_frames"
+        current_thread().name = f"{camera.name} _process_frames"
 
         motion_frames = 0
         no_motion_frames = 0
@@ -623,7 +644,7 @@ class NVR:
 
             # periodic night/day check
             if now - camera.last_night_time_check > constants.PERIODIC_CHECK_INTERVAL:
-                is_night = 1 if _is_night_time(frame_bgr, constants.NIGHT_TIME_THRESHOLD) else 0
+                profile = self.get_motion_threshold(_is_night_time(frame_bgr, constants.NIGHT_TIME_THRESHOLD))
                 camera.last_night_time_check = time.time()
                 if now - prev_time > 10.0:
                     log_event("stopped reading frames", level="info", camera=camera)
@@ -658,8 +679,8 @@ class NVR:
 
             krs, kcs, dsrs, dscs, dars, dacs = [], [], [], [], [], []
             camera.motion_boxes_list.clear()
-            if score > self.motion_threshold[is_night]:
-                krs, kcs, dsrs, dscs, dars, dacs = self._find_motion_boxes(thresh, self.motion_threshold[is_night])                
+            if score > profile.motion_threshold:
+                krs, kcs, dsrs, dscs, dars, dacs = self._find_motion_boxes(thresh, profile.motion_threshold, profile.min_solidity, profile.min_area_ratio)                
                 camera.motion_boxes_list.extend(krs)
 
             # counters, we need motion (or no motion) for a number of consecutive frames to care
@@ -670,12 +691,11 @@ class NVR:
                 no_motion_frames += 1
 
             # Normalize score to [0, 1]
-            max_pixels = self.width * self.height
-            pixel_score = min(score / (max_pixels * 0.05), 1.0)  # 5% of frame = full confidence
+            pixel_score = min(score / (self.max_pixels * profile.motion_threshold), 1.0)  # profile.motion_threshold% of frame = full confidence
 
             # Box score: larger boxes = higher confidence
             box_areas = [(x2 - x1) * (y2 - y1) for (x1, y1, x2, y2) in camera.motion_boxes_list]
-            box_score = min(sum(box_areas) / (max_pixels * 0.10), 1.0) if box_areas else 0
+            box_score = min(sum(box_areas) / (self.max_pixels * 0.10), 1.0) if box_areas else 0
 
             # Persistence score: more consecutive frames = higher confidence
             persist_score = min(motion_frames / constants.MOTION_DETECT_FRAME_COUNT, 1.0)
@@ -684,7 +704,7 @@ class NVR:
             motion_confidence = (pixel_score * 0.5) + (box_score * 0.3) + (persist_score * 0.2)
             camera.motion_confidence = motion_confidence
 
-            if not camera.motion_boxes_list and score < self.motion_threshold[is_night]:
+            if not camera.motion_boxes_list and score < profile.motion_threshold:
                 camera.motion_confidence = 0.0
 
             if camera.debug:
@@ -743,9 +763,6 @@ class NVR:
 
                 camera.debug_motion_image = composite
 
-
-
-
             # YOLO
             result = None
             camera.classes_in_frame_dict.clear()
@@ -758,7 +775,7 @@ class NVR:
 
                 result = camera.model.model.predict(
                     frame_bgr,
-                    conf=self.confidence_threshold,
+                    conf=profile.yolo_conf,
                     classes=self.selected_classes if self.selected_classes else None,
                     verbose=False,
                     imgsz=512,

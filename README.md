@@ -62,7 +62,7 @@ python app.py -d <recordings folder> -u rtsp-username -p rtsp-password
 Configuration is provided in a nvr.json file. "downsize_resolution" specifies the [x, y] dimensions in pixels to resize frames to for YOLO processing and rendering on the GUI. "yolo.model" specifies the name of the YOLO model to use. "yolo.classes" is an array of coco classes of objects to detect in the image processing. Each camera is named and specifies the URL and a boolean to set enabled/disabled.
 ```json
 {
-    "downsize_resolution": [704, 480],
+    "resolution": [704, 480],
     "yolo": {
         "classes": ["person", "car", "truck", "bus", "bicycle", "motorcycle", "cat", "dog"],
         "model": "yolov8n.pt"

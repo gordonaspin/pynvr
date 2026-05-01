@@ -52,15 +52,10 @@ class GUI:
         self.nvr.confidence_threshold = val
         log_event(message=f"confidence updated → {val}")
 
-    def update_day_motion_threshold(self, val):
+    def update_motion_threshold(self, val):
         """ modifies the motion detection threshold of the NVR """
-        self.nvr.motion_threshold[0] = val
-        log_event(message=f"day motion threshold → {val}")
-
-    def update_night_motion_threshold(self, val):
-        """ modifies the night motion threshold of the NVR """
-        self.nvr.motion_threshold[1] = val
-        log_event(message=f"night motion threshold → {val}")
+        self.nvr.motion_threshold = val
+        log_event(message=f"motion threshold → {val}")
 
     def update_detection_classes(self, names):
         """ updates the set of object class indexes to detect in the NVR """
@@ -154,7 +149,7 @@ class GUI:
         if not filtered:
             # No events → return empty timeline
             img = Image.new("RGB", (900, 200), (31, 41, 55))
-            return img, [], []
+            return img, []
 
         grouped_events = filtered
 
@@ -255,25 +250,18 @@ class GUI:
             with gr.Accordion("Controls", open=False):
                 with gr.Row():
                     with gr.Column(scale=1):
-                        confidence_threshold_slider = gr.Slider(label="YOLO Confidence",
+                        confidence_threshold_slider = gr.Slider(label="Detection Confidence",
                                                                 minimum=constants.CONFIDENCE_THRESHOLD_MIN,
                                                                 maximum=constants.CONFIDENCE_THRESHOLD_MAX,
                                                                 value=self.ctx.confidence_threshold,
                                                                 step=0.05,
                                                                 )
                     with gr.Column(scale=1):
-                        day_motion_threshold_slider = gr.Slider(label="Day Motion",
-                                                                minimum=constants.MOTION_THRESHOLD_MIN[0],
-                                                                maximum=constants.MOTION_THRESHOLD_MAX[0],
-                                                                value=self.ctx.motion_threshold[0],
-                                                                step=50,
-                                                                )
-                    with gr.Column(scale=1):
-                        night_motion_threshold_slider = gr.Slider(label="Night Motion",
-                                                                minimum=constants.MOTION_THRESHOLD_MIN[1],
-                                                                maximum=constants.MOTION_THRESHOLD_MAX[1],
-                                                                value=self.ctx.motion_threshold[1],
-                                                                step=50,
+                        motion_threshold_slider = gr.Slider(label="% Pixel Change in Motion",
+                                                                minimum=constants.MOTION_THRESHOLD_MIN,
+                                                                maximum=constants.MOTION_THRESHOLD_MAX,
+                                                                value=self.ctx.motion_threshold,
+                                                                step=0.1,
                                                                 )
 
                     with gr.Column(scale=4):
@@ -286,8 +274,7 @@ class GUI:
                         files_checkbox = gr.Checkbox(label="Produce Debug Images", value=self.ctx.debug_files, elem_classes="custom-checkbox")
 
                 confidence_threshold_slider.change(self.update_confidence_threshold, confidence_threshold_slider)
-                day_motion_threshold_slider.change(self.update_day_motion_threshold, day_motion_threshold_slider)
-                night_motion_threshold_slider.change(self.update_night_motion_threshold, night_motion_threshold_slider)
+                motion_threshold_slider.change(self.update_motion_threshold, motion_threshold_slider)
                 detection_classes.change(self.update_detection_classes, detection_classes)
                 debug_checkbox.change(fn=self.update_debug, inputs=debug_checkbox,  outputs=[])
                 files_checkbox.change(fn=self.update_debug_files, inputs=files_checkbox,  outputs=[])
@@ -340,11 +327,6 @@ class GUI:
                     outputs=[selected_video, event_info]
                 )
 
-                # Initial render
-                img, regions = self.draw_timeline()
-                timeline_img.value = img
-                regions_state.value = regions
-
                 # Timer updates the timeline every 5 seconds
                 def refresh():
                     img, regions = self.draw_timeline()
@@ -353,9 +335,11 @@ class GUI:
                 timer = gr.Timer(5)
                 timer.tick(fn=refresh, inputs=None, outputs=[timeline_img, regions_state])
 
+                # Initial render
+                img, regions = self.draw_timeline()
+                timeline_img.value = img
+                regions_state.value = regions
 
-
-    
             # Event log HTML
             with gr.Row():
                 log_box = gr.HTML()

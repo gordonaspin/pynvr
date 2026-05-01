@@ -11,10 +11,10 @@ class Context:
     gui_password: str
     camera_config: dict
     bind_address: str
-    motion_threshold: list[int, int]
+    motion_threshold: float
     confidence_threshold: float
     motion_detect_frame_count: int
-    downsize_resolution: list[int, int]
+    resolution: list[int, int]
     model: str
     classes: list[str]
     debug: bool
