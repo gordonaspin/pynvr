@@ -23,7 +23,7 @@ import constants
 from context import Context
 from logger import log_event
 from model import Model
-from profile import MotionProfile
+from motion_profile import MotionProfile
 
 logger = getLogger("nvr")
 
@@ -528,12 +528,13 @@ class NVR:
     def load_events(self):
         grouped = defaultdict(list)
         for camera in self.cameras.values():
-            events = []
-            for f in glob.glob(f"{camera.recordings_dir}/*.json"):
-                with open(f) as fp:
-                    events.append(json.load(fp))
-            events.sort(key=lambda x: x["start_time"])
-            grouped[camera.name] = events
+            if camera.enabled:
+                events = []
+                for f in glob.glob(f"{camera.recordings_dir}/*.json"):
+                    with open(f) as fp:
+                        events.append(json.load(fp))
+                events.sort(key=lambda x: x["start_time"])
+                grouped[camera.name] = events
         return grouped
 
     def _frame_reader(self, camera: Camera):

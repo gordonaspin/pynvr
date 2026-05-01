@@ -23,10 +23,11 @@ class GUI:
         self.last_event_hash = None
         self.color_map = {}
         file = font_manager.findfont('Verdana', fontext='ttf')
-        self.courier_font = ImageFont.truetype(file, 12)
+        self.courier_font = ImageFont.truetype(file, 14)
         self.row_height = 40
         self.padding = 10
         self.scale_height = 30
+        self.legend_height = 50
 
         for i, s in enumerate(self.classes):
             hue = i / len(self.classes)  # evenly spaced
@@ -109,7 +110,7 @@ class GUI:
 
     def get_height(self):
         """ computes the height of the timeline image based on the number of cameras """
-        return self.scale_height + len(self.nvr.cameras) * self.row_height + self.padding * 2
+        return self.scale_height + len(self.nvr.cameras) * self.row_height + self.legend_height + self.padding * 2
     # ------------------------------------------------------------
     # Draw timeline as an image + return clickable regions
     # ------------------------------------------------------------
@@ -191,37 +192,42 @@ class GUI:
             label = datetime.fromtimestamp(t).strftime("%H:%M")
             draw.text((x + 2, scale_top + 2), label, fill="white")
 
-        for idx, camera in enumerate(cameras):
-            y_top = scale_bottom + self.padding + idx * self.row_height
-            y_bottom = y_top + self.row_height - 5
+        for idx, (camera_name, camera) in enumerate(sorted(self.nvr.cameras.items(), key=lambda c: c[1].name)):
+            if camera.enabled:
+                y_top = scale_bottom + self.padding + idx * self.row_height
+                y_bottom = y_top + self.row_height - 5
 
-            # Draw camera label
-            draw.text((10, y_top + 10), camera, font=self.courier_font,fill="white")
+                # Draw camera label
+                draw.text((10, y_top + 10), camera.name, font=self.courier_font,fill="white")
 
-            # Draw timeline background
-            draw.rectangle(
-                [label_width, y_top + 5, width - 10, y_bottom],
-                fill="#374151"
-            )
+                # Draw timeline background
+                draw.rectangle(
+                    [label_width, y_top + 5, width - 10, y_bottom],
+                    fill="#374151"
+                )
 
+        for idx, (camera_name, camera) in enumerate(sorted(self.nvr.cameras.items(), key=lambda c: c[1].name)):
             # Draw events
-            for e in grouped_events[camera]:
-                left = label_width + max(0, int((e["start_time"] - start) / span * (width - label_width - 20)))
-                right = label_width + int((e["end_time"] - start) / span * (width - label_width - 20))
+            if camera.enabled:
+                y_top = scale_bottom + self.padding + idx * self.row_height
+                y_bottom = y_top + self.row_height - 5
+                for e in grouped_events.get(camera.name, []):
+                    left = label_width + max(0, int((e["start_time"] - start) / span * (width - label_width - 20)))
+                    right = label_width + int((e["end_time"] - start) / span * (width - label_width - 20))
 
-                colors = tag_colors(e["tags"])
-                for i, color in enumerate(colors):
-                    draw.rectangle([left, y_top + 5 + i * (y_bottom - y_top - 5) // len(colors), right, y_bottom], fill=color)
+                    colors = tag_colors(e["tags"])
+                    for i, color in enumerate(colors):
+                        draw.rectangle([left, y_top + 5 + i * (y_bottom - y_top - 5) // len(colors), right, y_bottom], fill=color)
 
-                metadata_str = f"<a href=\"/gradio_api/file={e['metadata']}\" target=\"_blank\">View</a>" if e.get("metadata") else "N/A"
-                info_html = f"""
-                <b>Camera:</b> {camera} | 
-                <b>Tags:</b> {self.nvr._tags_to_str(e["tags"]) if isinstance(e["tags"], dict) else tag_label(e["tags"])} |
-                <b>Start:</b> {datetime.fromtimestamp(e['start_time']).strftime('%Y-%m-%d %H:%M:%S')} - 
-                <b>End:</b> {datetime.fromtimestamp(e['end_time']).strftime('%Y-%m-%d %H:%M:%S')}<br>
-                <b>Metadata:</b> {metadata_str}
-                """
-                clickable_regions.append((left, y_top+5, right, y_bottom, e["output"], info_html))                # Tooltip
+                    metadata_str = f"<a href=\"/gradio_api/file={e['metadata']}\" target=\"_blank\">View</a>" if e.get("metadata") else "N/A"
+                    info_html = f"""
+                    <b>Camera:</b> {camera.name} | 
+                    <b>Tags:</b> {self.nvr._tags_to_str(e["tags"]) if isinstance(e["tags"], dict) else tag_label(e["tags"])} |
+                    <b>Start:</b> {datetime.fromtimestamp(e['start_time']).strftime('%Y-%m-%d %H:%M:%S')} - 
+                    <b>End:</b> {datetime.fromtimestamp(e['end_time']).strftime('%Y-%m-%d %H:%M:%S')}<br>
+                    <b>Metadata:</b> {metadata_str}
+                    """
+                    clickable_regions.append((left, y_top+5, right, y_bottom, e["output"], info_html))                # Tooltip
 
         for index, (cls, color) in enumerate(self.color_map.items()):
             draw.text((label_width + index * 80, y_bottom + 20), cls, font=self.courier_font, fill=color)
