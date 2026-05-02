@@ -742,11 +742,27 @@ class NVR:
                 for (x1, y1, x2, y2) in dars:
                     cv2.rectangle(panel_thresh, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
-                cv2.putText(panel_thresh, f"score={score}", (10, 55),
+                vpos = 55
+                cv2.putText(panel_thresh, f"score={score}", (10, vpos),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(panel_thresh, f"conf={camera.motion_confidence:.2f}", (10, 85),
+                vpos += 30
+                cv2.putText(panel_thresh, f"conf={camera.motion_confidence:.2f}", (10, vpos),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-
+                vpos += 30
+                cv2.putText(panel_thresh, f"conf={pixel_score:.2f}", (10, vpos),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                vpos += 30
+                cv2.putText(panel_thresh, f"box={box_score:.2f}", (10, vpos),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                vpos += 30
+                cv2.putText(panel_thresh, f"persist={persist_score:.2f}", (10, vpos),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                vpos += 30
+                cv2.putText(panel_thresh, f"box count={len(camera.motion_boxes_list)}", (10, vpos),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                vpos += 30
+                cv2.putText(panel_thresh, f"objs={self._tags_to_str(camera.active_objects_dict)}", (10, vpos),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 # --- RESIZE PANELS ---
                 h, w = frame_bgr.shape[:2]
                 half_w = w // 2
@@ -867,7 +883,7 @@ class NVR:
                 #img_bgr = cv2.addWeighted(img_bgr, 0.5, camera.debug_motion_image, 0.5, 0)
                 img_bgr = camera.debug_motion_image
 
-            if not self.cameras[camera.name].hd:
+            if not self.cameras[camera.name].hd and not camera.debug:
                 img_bgr = cv2.resize(img_bgr, constants.RENDER_SIZE)
 
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
