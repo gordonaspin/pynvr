@@ -1,6 +1,6 @@
 """Constants"""
 from enum import Enum, auto
-# For retrying connection after timeouts and errors
+import numpy as np # For retrying connection after timeouts and errors
 
 # =========================
 # SETTINGS
@@ -28,6 +28,30 @@ PERIODIC_CHECK_INTERVAL = 300 # seconds
 NIGHT_TIME_THRESHOLD = 100
 
 STATUS_UPDATE_INTERVAL = 0.5 # seconds
+
+# -----------------------------------------
+# Reference LAB colors (approximate swatches)
+# -----------------------------------------
+REF_COLORS = {
+    # Standard colors
+    "red":     np.array([53,  80,  67]),
+    "orange":  np.array([65,  45,  70]),
+    "yellow":  np.array([97, -21,  94]),
+    "green":   np.array([87, -86,  83]),
+    "cyan":    np.array([91, -48, -14]),
+    "blue":    np.array([32,  79, -108]),
+    "purple":  np.array([60,  98, -60]),
+    "pink":    np.array([75,  25,  -5]),
+
+    # Earth tones
+    "brown":   np.array([37,  14,  18]),
+    "beige":   np.array([80,   0,  20]),
+    "tan":     np.array([70,   5,  30]),
+
+    # Metallics
+    "gold":    np.array([75,   5,  65]),
+    "silver":  np.array([80,   0,   0]),
+}
 
 class ExitCode(Enum):
     """

@@ -1,4 +1,3 @@
-from collections import defaultdict
 from logging import getLogger
 from datetime import datetime
 
@@ -17,23 +16,22 @@ logger = getLogger("nvr")
 
 class GUI:
     def __init__(self, ctx: Context, nvr: NVR):
-        self.ctx = ctx
-        self.classes = ctx.classes
-        self.nvr = nvr
-        self.last_event_hash = None
-        self.color_map = {}
+        self._ctx = ctx
+        self._classes = ctx.classes
+        self._nvr = nvr
+        self._color_map = {}
         file = font_manager.findfont('Verdana', fontext='ttf')
-        self.courier_font = ImageFont.truetype(file, 14)
-        self.row_height = 40
-        self.padding = 10
-        self.scale_height = 30
-        self.legend_height = 50
+        self._courier_font = ImageFont.truetype(file, 14)
+        self._row_height = 40
+        self._padding = 10
+        self._scale_height = 30
+        self._legend_height = 50
 
-        for i, s in enumerate(self.classes):
-            hue = i / len(self.classes)  # evenly spaced
+        for i, s in enumerate(self._classes):
+            hue = i / len(self._classes)  # evenly spaced
             r, g, b = colorsys.hsv_to_rgb(h=hue, s=0.65, v=0.95)
 
-            self.color_map[s] = "#{:02x}{:02x}{:02x}".format(
+            self._color_map[s] = "#{:02x}{:02x}{:02x}".format(
                 int(r * 255), int(g * 255), int(b * 255)
             )
 
@@ -45,47 +43,43 @@ class GUI:
 
         return frame.copy(), camera.status
     
-    # =========================
     # UI HANDLERS
-    # =========================
     def update_confidence_threshold(self, val):
         """ modifies the object detection confidence threshold of the NVR YOLO model """
-        self.nvr.confidence_threshold = val
+        self._nvr.confidence_threshold = val
         log_event(message=f"confidence updated → {val}")
 
     def update_motion_threshold(self, val):
         """ modifies the motion detection threshold of the NVR """
-        self.nvr.motion_threshold = val
+        self._nvr.motion_threshold = val
         log_event(message=f"motion threshold → {val}")
 
     def update_detection_classes(self, names):
         """ updates the set of object class indexes to detect in the NVR """
-        self.nvr.selected_classes = self.nvr.model.class_to_index(names)
+        self._nvr.selected_classes = self._nvr.model.class_to_index(names)
         log_event(message=f"classes → {names}")
 
     def update_hd(self, name, val):
         """ updates the HD option for viewing the camera image """
-        self.nvr.cameras[name].hd = val
-        log_event(message=f"HD mode {'on' if val else 'off'}", camera=self.nvr.cameras[name])
+        self._nvr.cameras[name].hd = val
+        log_event(message=f"HD mode {'on' if val else 'off'}", camera=self._nvr.cameras[name])
 
     def update_camera_debug(self, name, val):
         """ updates the Debug option for the camera """
-        self.nvr.cameras[name].debug = val
-        log_event(message=f"Debug mode {'on' if val else 'off'}", camera=self.nvr.cameras[name])
+        self._nvr.cameras[name].debug = val
+        log_event(message=f"Debug mode {'on' if val else 'off'}", camera=self._nvr.cameras[name])
 
     def update_debug(self, val):
         """" updates the debug option of the NVR """
-        self.nvr.debug = val
+        self._nvr.debug = val
         log_event(message=f"Detections {'on' if val else 'off'}")
 
     def update_debug_files(self, val):
         """ updates the debug_files option of the NVR """
-        self.nvr.debug_files = val
+        self._nvr.debug_files = val
         log_event(message=f"Debug files {'on' if val else 'off'}")
 
-    # =========================
     # UI STREAMS
-    # =========================
     def get_log_html(self):
         """ writes the HTML for the log view """
         content = "".join(x for x in event_log[-constants.MAX_LOG_LINES:])
@@ -110,27 +104,28 @@ class GUI:
 
     def get_height(self):
         """ computes the height of the timeline image based on the number of cameras """
-        return self.scale_height + len(self.nvr.cameras) * self.row_height + self.legend_height + self.padding * 2
+        return self._scale_height + len(self._nvr.cameras) * self._row_height + self._legend_height + self._padding * 2
+
+    def draw_timeline(self):
     # ------------------------------------------------------------
     # Draw timeline as an image + return clickable regions
     # ------------------------------------------------------------
-    def draw_timeline(self):
 
         def tag_colors(tags):
             colors = []
             if isinstance(tags, dict):
                 for obj, _ in tags.items():
-                    colors.append(self.color_map.get(obj, "#9E9E9E"))
+                    colors.append(self._color_map.get(obj, "#9E9E9E"))
             else:
                 for tag in tags:
-                    colors.append(self.color_map.get(tag[0], "#9E9E9E"))
+                    colors.append(self._color_map.get(tag[0], "#9E9E9E"))
             return colors
 
         def tag_label(tags):
             objects = [f"{obj}({color})" for obj, color in tags]
             return ", ".join(objects) if objects else "motion"
         
-        grouped_events = self.nvr.load_events()
+        grouped_events = self._nvr.load_events()
 
         hours = 4
         # Limit to past 4 hours
@@ -171,11 +166,9 @@ class GUI:
 
         clickable_regions = []  # (x1, y1, x2, y2, video_path)
 
-        # ------------------------------------------------------------
-        # Draw 24-hour time scale at the top
-        # ------------------------------------------------------------
-        scale_top = self.padding
-        scale_bottom = scale_top + self.scale_height - 5
+        # Draw time scale at the top
+        scale_top = self._padding
+        scale_bottom = scale_top + self._scale_height - 5
             
         # Background
         draw.rectangle([label_width, scale_top, width - 10, scale_bottom], fill="#2d3748")
@@ -192,13 +185,13 @@ class GUI:
             label = datetime.fromtimestamp(t).strftime("%H:%M")
             draw.text((x + 2, scale_top + 2), label, fill="white")
 
-        for idx, (camera_name, camera) in enumerate(sorted(self.nvr.cameras.items(), key=lambda c: c[1].name)):
+        for idx, (camera_name, camera) in enumerate(sorted(self._nvr.cameras.items(), key=lambda c: c[1].name)):
             if camera.enabled:
-                y_top = scale_bottom + self.padding + idx * self.row_height
-                y_bottom = y_top + self.row_height - 5
+                y_top = scale_bottom + self._padding + idx * self._row_height
+                y_bottom = y_top + self._row_height - 5
 
                 # Draw camera label
-                draw.text((10, y_top + 10), camera.name, font=self.courier_font,fill="white")
+                draw.text((10, y_top + 10), camera.name, font=self._courier_font,fill="white")
 
                 # Draw timeline background
                 draw.rectangle(
@@ -206,11 +199,11 @@ class GUI:
                     fill="#374151"
                 )
 
-        for idx, (camera_name, camera) in enumerate(sorted(self.nvr.cameras.items(), key=lambda c: c[1].name)):
+        for idx, (camera_name, camera) in enumerate(sorted(self._nvr.cameras.items(), key=lambda c: c[1].name)):
             # Draw events
             if camera.enabled:
-                y_top = scale_bottom + self.padding + idx * self.row_height
-                y_bottom = y_top + self.row_height - 5
+                y_top = scale_bottom + self._padding + idx * self._row_height
+                y_bottom = y_top + self._row_height - 5
                 for e in grouped_events.get(camera.name, []):
                     left = label_width + max(0, int((e["start_time"] - start) / span * (width - label_width - 20)))
                     right = label_width + int((e["end_time"] - start) / span * (width - label_width - 20))
@@ -222,15 +215,15 @@ class GUI:
                     metadata_str = f"<a href=\"/gradio_api/file={e['metadata']}\" target=\"_blank\">View</a>" if e.get("metadata") else "N/A"
                     info_html = f"""
                     <b>Camera:</b> {camera.name} | 
-                    <b>Tags:</b> {self.nvr._tags_to_str(e["tags"]) if isinstance(e["tags"], dict) else tag_label(e["tags"])} |
+                    <b>Tags:</b> {self._nvr._tags_to_str(e["tags"]) if isinstance(e["tags"], dict) else tag_label(e["tags"])} |
                     <b>Start:</b> {datetime.fromtimestamp(e['start_time']).strftime('%Y-%m-%d %H:%M:%S')} - 
                     <b>End:</b> {datetime.fromtimestamp(e['end_time']).strftime('%Y-%m-%d %H:%M:%S')}<br>
                     <b>Metadata:</b> {metadata_str}
                     """
                     clickable_regions.append((left, y_top+5, right, y_bottom, e["output"], info_html))                # Tooltip
 
-        for index, (cls, color) in enumerate(self.color_map.items()):
-            draw.text((label_width + index * 80, y_bottom + 20), cls, font=self.courier_font, fill=color)
+        for index, (cls, color) in enumerate(self._color_map.items()):
+            draw.text((label_width + index * 80, y_bottom + 20), cls, font=self._courier_font, fill=color)
 
         return img, clickable_regions
 
@@ -241,7 +234,7 @@ class GUI:
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return video, info_html
 
-        return None, ""
+        return None, "No video selected"
 
     def on_load(self):
         """ called when the GUI loads for a client """
@@ -259,25 +252,25 @@ class GUI:
                         confidence_threshold_slider = gr.Slider(label="Detection Confidence",
                                                                 minimum=constants.CONFIDENCE_THRESHOLD_MIN,
                                                                 maximum=constants.CONFIDENCE_THRESHOLD_MAX,
-                                                                value=self.ctx.confidence_threshold,
+                                                                value=self._ctx.confidence_threshold,
                                                                 step=0.05,
                                                                 )
                     with gr.Column(scale=1):
                         motion_threshold_slider = gr.Slider(label="% Pixel Change in Motion",
                                                                 minimum=constants.MOTION_THRESHOLD_MIN,
                                                                 maximum=constants.MOTION_THRESHOLD_MAX,
-                                                                value=self.ctx.motion_threshold,
+                                                                value=self._ctx.motion_threshold,
                                                                 step=0.1,
                                                                 )
 
                     with gr.Column(scale=4):
                         detection_classes = gr.CheckboxGroup(label="Objects",
-                                                            choices=self.classes,
-                                                            value=self.classes,
+                                                            choices=self._classes,
+                                                            value=self._classes,
                                                             )
                     with gr.Column(scale=1):
-                        debug_checkbox = gr.Checkbox(label="Debug", value=self.ctx.debug, elem_classes="custom-checkbox")
-                        files_checkbox = gr.Checkbox(label="Produce Debug Images", value=self.ctx.debug_files, elem_classes="custom-checkbox")
+                        debug_checkbox = gr.Checkbox(label="Debug", value=self._ctx.debug, elem_classes="custom-checkbox")
+                        files_checkbox = gr.Checkbox(label="Produce Debug Images", value=self._ctx.debug_files, elem_classes="custom-checkbox")
 
                 confidence_threshold_slider.change(self.update_confidence_threshold, confidence_threshold_slider)
                 motion_threshold_slider.change(self.update_motion_threshold, motion_threshold_slider)
@@ -287,9 +280,9 @@ class GUI:
 
             # Cameras
             outputs = []
-            for i in range(0, int(len(self.nvr.cameras)/5)):
+            for i in range(0, int(len(self._nvr.cameras)/5)):
                 with gr.Row():
-                    d = dict(list(self.nvr.cameras.items())[i*5:5+i*5])
+                    d = dict(list(self._nvr.cameras.items())[i*5:5+i*5])
                     for camera in d.values():
                         if camera.enabled:
                             with gr.Column():
@@ -368,10 +361,10 @@ class GUI:
         try:
             demo.launch(
                 #share=True,
-                auth=[self.ctx.gui_username, self.ctx.gui_password] if all([self.ctx.gui_username, self.ctx.gui_password]) else None,
-                server_name=self.ctx.bind_address,
+                auth=[self._ctx.gui_username, self._ctx.gui_password] if all([self._ctx.gui_username, self._ctx.gui_password]) else None,
+                server_name=self._ctx.bind_address,
                 theme=gr.themes.Soft(),
-                allowed_paths=[self.ctx.directory],
+                allowed_paths=[self._ctx.directory],
                 css="""
                     .mono-textbox textarea {
                         font-family: "Courier New", monospace !important;

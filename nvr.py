@@ -12,7 +12,6 @@ import time
 from math import sqrt
 
 import cv2
-from ffmpeg import FFmpeg
 from gradio.monitoring_dashboard import data
 from tomlkit import value
 import torch
@@ -27,233 +26,38 @@ from motion_profile import MotionProfile
 
 logger = getLogger("nvr")
 
-def _is_night_time(frame, brightness_threshold=50):
-    """
-    determines if we are looking at a night time image.
-    Converts the frame to HSV and computes the mean value of intensity channel
-    it's night time if below the threshold, else it's day time
-    """
-    # Convert to HSV (Hue, Saturation, Intensity)
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    
-    # Calculate average brightness (V channel - Intensity)
-    mean_brightness = np.mean(hsv[:,:,2])
-    
-    # If brightness is low, it's likely night time
-    return mean_brightness < brightness_threshold
-
-def get_most_moving_yolo_box(yolo_boxes, motion_boxes):
-    best_box = None
-    best_overlap = 0.0
-
-    for box in yolo_boxes:
-        x1, y1, x2, y2 = box.xyxy[0].tolist()
-        box_area = max(1, (x2 - x1) * (y2 - y1))
-
-        for mx1, my1, mx2, my2 in motion_boxes:
-            ix1 = max(x1, mx1)
-            iy1 = max(y1, my1)
-            ix2 = min(x2, mx2)
-            iy2 = min(y2, my2)
-
-            inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
-            overlap_ratio = inter_area / box_area
-
-            if overlap_ratio > best_overlap:
-                best_overlap = overlap_ratio
-                best_box = box
-
-    return best_box
-
-
-def _keep_overlapping_any(boxes, ref_boxes):
-    """
-    compute the pairwise intersection of the motion boxes and object boxes.
-    Return the filter so caller can weed out YOLO objects to draw/not draw
-    boxes: YOLO r.boxes.xyxy  -> (N, 4)
-    ref_boxes: cv2.boundingRect -> (M, 4) in (x, y, x1, y1)
-    """
-
-    # 1. Ensure correct shapes
-    boxes = boxes.view(-1, 4)
-    ref_boxes = ref_boxes.view(-1, 4)
-
-    # 3. Compute pairwise intersection
-    x1 = torch.maximum(boxes[:, None, 0], ref_boxes[None, :, 0])
-    y1 = torch.maximum(boxes[:, None, 1], ref_boxes[None, :, 1])
-    x2 = torch.minimum(boxes[:, None, 2], ref_boxes[None, :, 2])
-    y2 = torch.minimum(boxes[:, None, 3], ref_boxes[None, :, 3])
-
-    inter_w = (x2 - x1).clamp(min=0)
-    inter_h = (y2 - y1).clamp(min=0)
-
-    overlap = (inter_w * inter_h) > 0  # (N, M)
-
-    # 4. Keep if overlaps ANY ROI
-    return overlap.any(dim=1)
-
-def yolo_box_to_roi(frame_bgr, box):
-    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-
-    # Clamp to image bounds
-    h, w = frame_bgr.shape[:2]
-    x1 = max(0, min(x1, w))
-    x2 = max(0, min(x2, w))
-    y1 = max(0, min(y1, h))
-    y2 = max(0, min(y2, h))
-
-    roi = frame_bgr[y1:y2, x1:x2].copy()
-    return roi
-
-
-# -----------------------------------------
-# Reference LAB colors (approximate swatches)
-# -----------------------------------------
-REF_COLORS = {
-    # Standard colors
-    "red":     np.array([53,  80,  67]),
-    "orange":  np.array([65,  45,  70]),
-    "yellow":  np.array([97, -21,  94]),
-    "green":   np.array([87, -86,  83]),
-    "cyan":    np.array([91, -48, -14]),
-    "blue":    np.array([32,  79, -108]),
-    "purple":  np.array([60,  98, -60]),
-    "pink":    np.array([75,  25,  -5]),
-
-    # Earth tones
-    "brown":   np.array([37,  14,  18]),
-    "beige":   np.array([80,   0,  20]),
-    "tan":     np.array([70,   5,  30]),
-
-    # Metallics
-    "gold":    np.array([75,   5,  65]),
-    "silver":  np.array([80,   0,   0]),
-}
-
-# -----------------------------------------
-# LAB-based color classifier
-# -----------------------------------------
-def classify_color_lab(lab):
-    L, a, b = lab
-    chroma = sqrt(a*a + b*b)
-
-    # -----------------------------
-    # Neutral detection
-    # -----------------------------
-    if L < 30:
-        return "black"
-    if chroma < 10:
-        return "white" if L > 200 else "gray"
-
-    # -----------------------------
-    # Metallic detection
-    # -----------------------------
-    if 60 < L < 95 and chroma < 25:
-        return "silver"
-    if 60 < L < 95 and 25 <= chroma < 45 and b > 20:
-        return "gold"
-
-    # -----------------------------
-    # Earth tone detection
-    # -----------------------------
-    if 30 < L < 70 and 10 < chroma < 40:
-        if b > 25:
-            return "tan"
-        if 10 < b <= 25:
-            return "beige"
-        if b <= 10:
-            return "brown"
-
-    # -----------------------------
-    # Standard color classification
-    # -----------------------------
-    best = None
-    best_dist = 1e9
-
-    for name, ref in REF_COLORS.items():
-        dist = np.linalg.norm(lab - ref)
-        if dist < best_dist:
-            best_dist = dist
-            best = name
-
-    return best
-
-
-def detect_object_color(roi_bgr, k=2):
-    if roi_bgr is None or roi_bgr.size == 0:
-        return "unknown"
-
-    # Smooth noise
-    roi = cv2.GaussianBlur(roi_bgr, (5, 5), 0)
-
-    # Convert to LAB (OpenCV LAB)
-    lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
-
-    # 🔥 FIX: Convert OpenCV LAB → true LAB
-    lab[:, :, 1] -= 128.0   # a channel shift
-    lab[:, :, 2] -= 128.0   # b channel shift
-
-    # Flatten for k-means
-    pixels = lab.reshape((-1, 3))
-
-    # K-means clustering
-    _, labels, centers = cv2.kmeans(
-        pixels, k, None,
-        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0),
-        3,
-        cv2.KMEANS_PP_CENTERS
-    )
-
-    counts = np.bincount(labels.flatten())
-    sorted_idx = np.argsort(-counts)
-
-    total = len(pixels)
-
-    for idx in sorted_idx:
-        # Ignore tiny clusters (noise, highlights)
-        if counts[idx] < 0.05 * total:
-            continue
-
-        lab_color = centers[idx]
-        color_name = classify_color_lab(lab_color)
-
-        if color_name != "unknown":
-            return color_name
-
-    return "unknown"
-
-
 # =========================
 # NVR ENGINE
 # =========================
 class NVR:
     def __init__(self, ctx: Context):
-        self.ctx = ctx
+        self._ctx = ctx
+        self._width: int = ctx.resolution[0]
+        self._height: int = ctx.resolution[1]
+        self._max_pixels = self._width * self._height
+        
         self.model = Model(ctx)
         self.stop_event: Event = Event()
-        self.debug: bool = self.ctx.debug
-        self.debug_files: bool = self.ctx.debug_files
-        self.width: int = ctx.resolution[0]
-        self.height: int = ctx.resolution[1]
-        self.max_pixels = self.width * self.height
-        self.motion_threshold: float = self.ctx.motion_threshold
-        self.confidence_threshold: float = self.ctx.confidence_threshold
+        self.debug: bool = self._ctx.debug
+        self.debug_files: bool = self._ctx.debug_files
+        self.motion_threshold: float = self._ctx.motion_threshold
+        self.confidence_threshold: float = self._ctx.confidence_threshold
         self.selected_classes: list[int] = self.model.class_to_index(ctx.classes)
 
-        self.recordings_dir: str = ctx.directory
-        self.segments_dir: str = os.path.join(self.recordings_dir, "segments")
-        self.images_dir: str = os.path.join(self.recordings_dir, "images")
-        os.makedirs(self.recordings_dir, exist_ok=True)
-        os.makedirs(self.segments_dir, exist_ok=True)
-        os.makedirs(self.images_dir, exist_ok=True)
+        self._recordings_dir: str = ctx.directory
+        self._segments_dir: str = os.path.join(self._recordings_dir, "segments")
+        self._images_dir: str = os.path.join(self._recordings_dir, "images")
+        os.makedirs(self._recordings_dir, exist_ok=True)
+        os.makedirs(self._segments_dir, exist_ok=True)
+        os.makedirs(self._images_dir, exist_ok=True)
         self.cameras: dict[str, Camera] = {}
         for name, cfg in ctx.camera_config.items():
             self.cameras[name] = Camera(name=name,
                                         url=cfg['url'],
                                         enabled=cfg['enabled'],
-                                        recordings_dir=os.path.join(self.recordings_dir, name),
-                                        segments_dir=os.path.join(self.segments_dir, name),
-                                        images_dir=os.path.join(self.images_dir, name),
+                                        recordings_dir=os.path.join(self._recordings_dir, name),
+                                        segments_dir=os.path.join(self._segments_dir, name),
+                                        images_dir=os.path.join(self._images_dir, name),
                                         model=Model(ctx)
                                         )
 
@@ -330,7 +134,7 @@ class NVR:
                 "-nostats",
                 
                 "-filter_complex",                  # Split and reduce scale for raw only for OpenCV
-                f"[0:v]scale={self.width}:{self.height},format=bgr24[raw]", # re-scale and raw BGR pixel format (OpenCV native)
+                f"[0:v]scale={self._width}:{self._height},format=bgr24[raw]", # re-scale and raw BGR pixel format (OpenCV native)
 
                 # ---- TS segments (NO RE-ENCODE) ----
                 "-map", "0:v",                      # original stream, unaltered
@@ -482,7 +286,7 @@ class NVR:
         thread.start()
         return thread
 
-    def get_motion_threshold(self, is_night: bool):
+    def _get_motion_threshold(self, is_night: bool):
         if is_night:
             return MotionProfile(
                 name="night",
@@ -546,7 +350,7 @@ class NVR:
         """
         current_thread().name = f"{camera.name} _frame_reader"
 
-        frame_size = self.width * self.height * 3
+        frame_size = self._width * self._height * 3
 
         while not self.stop_event.is_set():
             raw = self._read_exact(camera.process.stdout, frame_size)
@@ -556,7 +360,7 @@ class NVR:
                 self._restart_camera(camera)
                 continue
 
-            frame = np.frombuffer(raw, np.uint8).reshape((self.height, self.width, 3))
+            frame = np.frombuffer(raw, np.uint8).reshape((self._height, self._width, 3))
 
             # FPS calculation
             now = time.perf_counter()
@@ -645,7 +449,7 @@ class NVR:
 
             # periodic night/day check
             if now - camera.last_night_time_check > constants.PERIODIC_CHECK_INTERVAL:
-                profile = self.get_motion_threshold(_is_night_time(frame_bgr, constants.NIGHT_TIME_THRESHOLD))
+                profile = self._get_motion_threshold(self._is_night_time(frame_bgr, constants.NIGHT_TIME_THRESHOLD))
                 camera.last_night_time_check = time.time()
                 if now - prev_time > 10.0:
                     log_event("stopped reading frames", level="info", camera=camera)
@@ -692,11 +496,11 @@ class NVR:
                 no_motion_frames += 1
 
             # Normalize score to [0, 1]
-            pixel_score = min(score / (self.max_pixels * profile.motion_threshold), 1.0)  # profile.motion_threshold% of frame = full confidence
+            pixel_score = min(score / (self._max_pixels * profile.motion_threshold), 1.0)  # profile.motion_threshold% of frame = full confidence
 
             # Box score: larger boxes = higher confidence
             box_areas = [(x2 - x1) * (y2 - y1) for (x1, y1, x2, y2) in camera.motion_boxes_list]
-            box_score = min(sum(box_areas) / (self.max_pixels * 0.10), 1.0) if box_areas else 0
+            box_score = min(sum(box_areas) / (self._max_pixels * 0.10), 1.0) if box_areas else 0
 
             # Persistence score: more consecutive frames = higher confidence
             persist_score = min(motion_frames / constants.MOTION_DETECT_FRAME_COUNT, 1.0)
@@ -810,20 +614,20 @@ class NVR:
                     )
 
                     # Filter YOLO boxes by overlap with motion
-                    keep_mask = _keep_overlapping_any(boxes_xyxy, motion_tensor)
+                    keep_mask = self._keep_overlapping_any(boxes_xyxy, motion_tensor)
                     moving_boxes = result.boxes[keep_mask]
                 else:
                     moving_boxes = []
 
                 # Pick the YOLO box with the strongest overlap
-                moving_box = get_most_moving_yolo_box(moving_boxes, camera.motion_boxes_list)
+                moving_box = self.get_most_moving_yolo_box(moving_boxes, camera.motion_boxes_list)
 
                 if moving_box is not None:
                     # Extract ROI
-                    roi = yolo_box_to_roi(frame_bgr, moving_box)
+                    roi = self.yolo_box_to_roi(frame_bgr, moving_box)
 
                     # Detect color
-                    color = detect_object_color(roi)
+                    color = self._detect_object_color(roi)
 
                     # Class name
                     class_name = self.model.model.names[int(moving_box.cls)]
@@ -889,7 +693,7 @@ class NVR:
             img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             prev_time = time.time()
 
-            parts = [self.make_status(recording)]
+            parts = [self._make_status(recording)]
             if is_night:
                 parts.append("Night")
 
@@ -901,7 +705,7 @@ class NVR:
             camera.status = " | ".join(parts)            
 
 
-    def make_status(self, recording: bool):
+    def _make_status(self, recording: bool):
         """
         creates a string that represents the status (red/green for recording/live)
         """
@@ -988,81 +792,163 @@ class NVR:
         )
 
 
-    def _find_motion_boxes2(self, thresh: tuple, motion_threshold, motion_factor: float, area_factor: float):
+    def _is_night_time(self, frame, brightness_threshold=50):
         """
-        using the threshold image, find contours and its bounding rectangle
-        if the contour area is below the motion score by the motion_factor, add to the discard list
-        if the contou area is smaller than its bounding rectangle by the area_factor, add to the discard list
-        else add the contour and rectangle to the keep list
-        return the lists so we can draw them on the overlay
+        determines if we are looking at a night time image.
+        Converts the frame to HSV and computes the mean value of intensity channel
+        it's night time if below the threshold, else it's day time
+        """
+        # Convert to HSV (Hue, Saturation, Intensity)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        
+        # Calculate average brightness (V channel - Intensity)
+        mean_brightness = np.mean(hsv[:,:,2])
+        
+        # If brightness is low, it's likely night time
+        return mean_brightness < brightness_threshold
+    
+    def get_most_moving_yolo_box(self, yolo_boxes, motion_boxes):
+        best_box = None
+        best_overlap = 0.0
+
+        for box in yolo_boxes:
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            box_area = max(1, (x2 - x1) * (y2 - y1))
+
+            for mx1, my1, mx2, my2 in motion_boxes:
+                ix1 = max(x1, mx1)
+                iy1 = max(y1, my1)
+                ix2 = min(x2, mx2)
+                iy2 = min(y2, my2)
+
+                inter_area = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+                overlap_ratio = inter_area / box_area
+
+                if overlap_ratio > best_overlap:
+                    best_overlap = overlap_ratio
+                    best_box = box
+
+        return best_box
+
+
+    def _keep_overlapping_any(self, boxes, ref_boxes):
+        """
+        compute the pairwise intersection of the motion boxes and object boxes.
+        Return the filter so caller can weed out YOLO objects to draw/not draw
+        boxes: YOLO r.boxes.xyxy  -> (N, 4)
+        ref_boxes: cv2.boundingRect -> (M, 4) in (x, y, x1, y1)
         """
 
-        keep_rects = []
-        keep_contours = []
-        discard_small_rects = []
-        discard_angular_rects = []
-        discard_small_contours = []
-        discard_angular_contours = []
+        # 1. Ensure correct shapes
+        boxes = boxes.view(-1, 4)
+        ref_boxes = ref_boxes.view(-1, 4)
 
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # 3. Compute pairwise intersection
+        x1 = torch.maximum(boxes[:, None, 0], ref_boxes[None, :, 0])
+        y1 = torch.maximum(boxes[:, None, 1], ref_boxes[None, :, 1])
+        x2 = torch.minimum(boxes[:, None, 2], ref_boxes[None, :, 2])
+        y2 = torch.minimum(boxes[:, None, 3], ref_boxes[None, :, 3])
 
-        for contour in contours:
-            contour_area = cv2.contourArea(contour)
-            x1, y1, w, h = cv2.boundingRect(contour)
-            x2 = x1 + w
-            y2 = y1 + h
-            rect = [x1, y1, x2, y2]
-            bounding_rect_area = w * h
+        inter_w = (x2 - x1).clamp(min=0)
+        inter_h = (y2 - y1).clamp(min=0)
 
-            if contour_area < motion_threshold * motion_factor:
-                discard_small_rects.append(rect)
-                discard_small_contours.append(contour)
+        overlap = (inter_w * inter_h) > 0  # (N, M)
 
-            elif contour_area < bounding_rect_area * area_factor:
-                discard_angular_rects.append(rect)
-                discard_angular_contours.append(contour)
+        # 4. Keep if overlaps ANY ROI
+        return overlap.any(dim=1)
 
-            else:
-                keep_rects.append(rect)
-                keep_contours.append(contour)
+    def yolo_box_to_roi(self, frame_bgr, box):
+        x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
 
-        # ------------------------------------------------------------
-        # SORTING: largest area → smallest area
-        # ------------------------------------------------------------
+        # Clamp to image bounds
+        h, w = frame_bgr.shape[:2]
+        x1 = max(0, min(x1, w))
+        x2 = max(0, min(x2, w))
+        y1 = max(0, min(y1, h))
+        y2 = max(0, min(y2, h))
 
-        def rect_area(rect):
-            x1, y1, x2, y2 = rect
-            return (x2 - x1) * (y2 - y1)
+        roi = frame_bgr[y1:y2, x1:x2].copy()
+        return roi
 
-        # Sort keep lists
-        keep_pairs = sorted(
-            zip(keep_rects, keep_contours),
-            key=lambda rc: rect_area(rc[0]),
-            reverse=True
+
+    def _detect_object_color(self, roi_bgr, k=2):
+        if roi_bgr is None or roi_bgr.size == 0:
+            return "unknown"
+
+        # Smooth noise
+        roi = cv2.GaussianBlur(roi_bgr, (5, 5), 0)
+
+        # Convert to LAB (OpenCV LAB)
+        lab = cv2.cvtColor(roi, cv2.COLOR_BGR2LAB).astype(np.float32)
+
+        # Convert OpenCV LAB → true LAB
+        lab[:, :, 1] -= 128.0   # a channel shift
+        lab[:, :, 2] -= 128.0   # b channel shift
+
+        # Flatten for k-means
+        pixels = lab.reshape((-1, 3))
+
+        # K-means clustering
+        _, labels, centers = cv2.kmeans(
+            pixels, k, None,
+            (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 20, 1.0),
+            3,
+            cv2.KMEANS_PP_CENTERS
         )
-        keep_rects, keep_contours = zip(*keep_pairs) if keep_pairs else ([], [])
 
-        # Sort discard-small lists
-        small_pairs = sorted(
-            zip(discard_small_rects, discard_small_contours),
-            key=lambda rc: rect_area(rc[0]),
-            reverse=True
-        )
-        discard_small_rects, discard_small_contours = zip(*small_pairs) if small_pairs else ([], [])
+        counts = np.bincount(labels.flatten())
+        sorted_idx = np.argsort(-counts)
 
-        # Sort discard-angular lists
-        angular_pairs = sorted(
-            zip(discard_angular_rects, discard_angular_contours),
-            key=lambda rc: rect_area(rc[0]),
-            reverse=True
-        )
-        discard_angular_rects, discard_angular_contours = zip(*angular_pairs) if angular_pairs else ([], [])
+        total = len(pixels)
 
-        return (
-            list(keep_rects),
-            list(keep_contours),
-            list(discard_small_rects),
-            list(discard_small_contours),
-            list(discard_angular_rects),
-            list(discard_angular_contours),
-        )
+        for idx in sorted_idx:
+            # Ignore tiny clusters (noise, highlights)
+            if counts[idx] < 0.05 * total:
+                continue
+
+            lab_color = centers[idx]
+            color_name = self._classify_color_lab(lab_color)
+
+            if color_name != "unknown":
+                return color_name
+
+        return "unknown"
+
+
+    def _classify_color_lab(self, lab_color):
+    # LAB-based color classifier
+        L, a, b = lab_color
+        chroma = sqrt(a*a + b*b)
+
+        # Neutral detection
+        if L < 30:
+            return "black"
+        if chroma < 10:
+            return "white" if L > 200 else "gray"
+
+        # Metallic detection
+        if 60 < L < 95 and chroma < 25:
+            return "silver"
+        if 60 < L < 95 and 25 <= chroma < 45 and b > 20:
+            return "gold"
+
+        # Earth tone detection
+        if 30 < L < 70 and 10 < chroma < 40:
+            if b > 25:
+                return "tan"
+            if 10 < b <= 25:
+                return "beige"
+            if b <= 10:
+                return "brown"
+
+        # Standard color classification
+        best = None
+        best_dist = 1e9
+
+        for name, ref in constants.REF_COLORS.items():
+            dist = np.linalg.norm(lab_color - ref)
+            if dist < best_dist:
+                best_dist = dist
+                best = name
+
+        return best

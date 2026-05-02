@@ -1,6 +1,5 @@
 click
 opencv-python
-python-ffmpeg
 scikit-image
 ultralytics
 gradio
