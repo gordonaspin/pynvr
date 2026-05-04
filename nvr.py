@@ -227,7 +227,7 @@ class NVR:
             jsondata_file = output + ".json"
             tags_str = self._tags_to_str(tags)
             if self.debug:
-                log_event(message=f"merging {len(segments)} xsegments {tags_str} to {output}", level="debug", camera=camera, file_path=output)
+                log_event(message=f"merging {len(segments)} segments {tags_str} to {output}", level="debug", camera=camera, file_path=output)
             
             # Convert to a standard dict and sets to lists
             serializable_tags = {k: list(v) for k, v in tags.items()}
@@ -306,6 +306,9 @@ class NVR:
     )
 
     def _tags_to_str(self, tags: defaultdict[set]):
+        if not tags:
+            return ""
+
         parts = []
         for obj, colors in tags.items():
             object_str = obj
@@ -428,7 +431,8 @@ class NVR:
         while not self.stop_event.is_set():
             # get latest frame (non-blocking)
             try:
-                frame_bgr = camera.frame_queue.get(timeout=0.5)
+                frame = camera.frame_queue.get(timeout=0.5)
+                frame_bgr = frame.copy() # we will draw on this, so copy it to avoid modifying the original frame in place which is used for motion detection and can cause weird artifacts if we draw on it directly
             except queue.Empty:
                 continue
 
@@ -512,6 +516,10 @@ class NVR:
             if not camera.motion_boxes_list and score < profile.motion_threshold:
                 camera.motion_confidence = 0.0
 
+            cv2.putText(frame_bgr, camera.status_text, (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if recording else (0, 255, 0), 2)
+            cv2.putText(frame_bgr, camera.objects_text, (10, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             if camera.debug:
                 # --- BUILD 4-PANEL DEBUG COMPOSITE ---
 
@@ -635,7 +643,7 @@ class NVR:
                     # Store in camera state
                     camera.classes_in_frame_dict[class_name].add(color)
 
-                    if camera.debug:
+                    if camera.debug and self.debug:
                         log_event(
                             message=f"Detected moving {color} {class_name} score {score} confidence {camera.motion_confidence:.2f} moving_box {moving_box} boxes_xyxy {boxes_xyxy} motion_boxes {camera.motion_boxes_list}",
                             level="debug",
@@ -690,7 +698,7 @@ class NVR:
             if not self.cameras[camera.name].hd and not camera.debug:
                 img_bgr = cv2.resize(img_bgr, constants.RENDER_SIZE)
 
-            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            #img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             prev_time = time.time()
 
             parts = [self._make_status(recording)]
@@ -698,11 +706,10 @@ class NVR:
                 parts.append("Night")
 
             parts.append(f"FPS {int(camera.fps.value())}:{camera.drop_rate:.2f}")
-            if camera.active_objects_dict:
-                parts.append(self._tags_to_str(camera.active_objects_dict))
+            camera.objects_text = self._tags_to_str(camera.active_objects_dict)
 
-            camera.latest_frame = img_rgb
-            camera.status = " | ".join(parts)            
+            camera.latest_frame = img_bgr
+            camera.status_text = " | ".join(parts)            
 
 
     def _make_status(self, recording: bool):
@@ -711,12 +718,11 @@ class NVR:
         """
         idx = int(time.time() * 4) % 4
 
-        red_cycle = ["🔴", "🔴", "⚪", "⚪"]
-        green_cycle = ["🟢", "🟢", "⚪", "⚪"]
+        record_cycle = ["*", "*", " ", " "]
 
-        pulse = red_cycle[idx] if recording else green_cycle[idx]
+        pulse = record_cycle[idx] if recording else ""
 
-        return f"{pulse}{' REC' if recording else ' LIVE'}"
+        return f"{pulse}{'REC' if recording else 'LIVE'}"
     
 
     def _find_motion_boxes(self, thresh, pixel_threshold, min_solidity=0.5, min_area_ratio=0.002):

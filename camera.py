@@ -63,7 +63,8 @@ class Camera:
 
     # UI / metadata
     hd: bool = True
-    status: str = "Not streaming"
+    status_text: str = "Not streaming"
+    objects_text: str = ""
 
     # logic state
     last_event_time: float = 0.0

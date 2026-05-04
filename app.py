@@ -12,6 +12,7 @@ from click import version_option
 import constants
 from context import Context
 from gui import GUI
+
 from logger import setup_logging, log_event, KeywordFilter
 from nvr import NVR
 
@@ -165,7 +166,7 @@ def main(directory: str,
     atexit.register(nvr.stop)
 
     gui = GUI(ctx, nvr)
-    gui.run()
+    app = gui.run()
 
 if __name__ == "__main__":
     main()

@@ -3,3 +3,5 @@ opencv-python
 scikit-image
 ultralytics
 gradio
+aiortc
+fastapi
