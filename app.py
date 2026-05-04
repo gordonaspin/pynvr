@@ -166,7 +166,7 @@ def main(directory: str,
     atexit.register(nvr.stop)
 
     gui = GUI(ctx, nvr)
-    app = gui.run()
+    gui.run()
 
 if __name__ == "__main__":
     main()

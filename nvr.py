@@ -399,7 +399,20 @@ class NVR:
             buf += chunk
         return buf
 
-
+    def draw_text(self, frame, text, position, font, font_scale, color, thickness, bg_color):
+        """
+        Utility function to draw text on a frame
+        """
+        if not text:
+            return
+        x, y = position
+        text_size, _ = cv2.getTextSize(text, font, 0.7, thickness)
+        text_w, text_h = text_size
+        # rectangle: (x, y) top-left, (x + text_w, y + text_h) bottom-right
+        # text: (x, y + text_h) bottom-left corner
+        cv2.rectangle(frame, (x, y-2), (x + text_w + 2, y + text_h + 6), bg_color, -1)
+        cv2.putText(frame, text, (x+1, y + text_h), font, font_scale, color, thickness)
+        
     def _process_frames(self, camera: Camera):
         """
         Thread to process frames from the camera queue. Processing is as follows:
@@ -516,10 +529,11 @@ class NVR:
             if not camera.motion_boxes_list and score < profile.motion_threshold:
                 camera.motion_confidence = 0.0
 
-            cv2.putText(frame_bgr, camera.status_text, (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if recording else (0, 255, 0), 2)
-            cv2.putText(frame_bgr, camera.objects_text, (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            self.draw_text(frame_bgr, camera.status_text, (0, 2),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255) if recording else (0, 255, 0), 2, (32, 32, 32))
+            self.draw_text(frame_bgr, camera.objects_text, (0, 27),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, (32, 32, 32))
+            
             if camera.debug:
                 # --- BUILD 4-PANEL DEBUG COMPOSITE ---
 
@@ -695,10 +709,8 @@ class NVR:
                 #img_bgr = cv2.addWeighted(img_bgr, 0.5, camera.debug_motion_image, 0.5, 0)
                 img_bgr = camera.debug_motion_image
 
-            if not self.cameras[camera.name].hd and not camera.debug:
-                img_bgr = cv2.resize(img_bgr, constants.RENDER_SIZE)
+            camera.latest_frame = img_bgr
 
-            #img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             prev_time = time.time()
 
             parts = [self._make_status(recording)]
@@ -707,8 +719,6 @@ class NVR:
 
             parts.append(f"FPS {int(camera.fps.value())}:{camera.drop_rate:.2f}")
             camera.objects_text = self._tags_to_str(camera.active_objects_dict)
-
-            camera.latest_frame = img_bgr
             camera.status_text = " | ".join(parts)            
 
 

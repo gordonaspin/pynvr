@@ -6,7 +6,6 @@ import numpy as np # For retrying connection after timeouts and errors
 # SETTINGS
 # =========================
 MAX_LOG_LINES = 1000
-RENDER_SIZE = (304, 208)
 
 MOTION_DETECT_FRAME_COUNT = 2*20
 NO_MOTION_DETECT_FRAME_COUNT = 5*20

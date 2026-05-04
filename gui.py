@@ -1,9 +1,10 @@
 from logging import getLogger
 from datetime import datetime
-
+import json
 import colorsys
 import gradio as gr
 from PIL import Image, ImageDraw, ImageFont
+from gradio.monitoring_dashboard import demo
 from matplotlib import font_manager
 from fastapi import FastAPI, Request
 from aiortc import RTCPeerConnection, RTCSessionDescription
@@ -39,16 +40,13 @@ class GUI:
             self._color_map[s] = "#{:02x}{:02x}{:02x}".format(
                 int(r * 255), int(g * 255), int(b * 255)
             )
-        self._camera_map = ""
-        for key in self._nvr.cameras.keys():
-            self._camera_map = self._camera_map + f'"{key}",'
-        self._camera_map = self._camera_map.rstrip(',')
-        pass
 
     def get_status(self, camera: Camera):
-
         return camera.status_text
     
+    def _get_cameras_for_js(self):
+        return [key for key in self._nvr.cameras.keys() if self._nvr.cameras[key].enabled]
+
     # UI HANDLERS
     def update_confidence_threshold(self, val):
         """ modifies the object detection confidence threshold of the NVR YOLO model """
@@ -65,10 +63,10 @@ class GUI:
         self._nvr.selected_classes = self._nvr.model.class_to_index(names)
         log_event(message=f"classes → {names}")
 
-    def update_hd(self, name, val):
-        """ updates the HD option for viewing the camera image """
-        self._nvr.cameras[name].hd = val
-        log_event(message=f"HD mode {'on' if val else 'off'}", camera=self._nvr.cameras[name])
+    #def update_hd(self, name, val):
+    #    """ updates the HD option for viewing the camera image """
+    #    self._nvr.cameras[name].hd = val
+    #    log_event(message=f"HD mode {'on' if val else 'off'}", camera=self._nvr.cameras[name])
 
     def update_camera_debug(self, name, val):
         """ updates the Debug option for the camera """
@@ -274,15 +272,17 @@ class GUI:
                                                             choices=self._classes,
                                                             value=self._classes,
                                                             )
-                    with gr.Column(scale=1):
-                        for camera in self._nvr.cameras.values():
-                            if camera.enabled:
-                                camera_debug_checkbox = gr.Checkbox(label=f"Debug {camera.name}",
-                                                        value=camera.debug,
-                                                        elem_classes="custom-checkbox")
-                                camera_debug_checkbox.change(fn=self.update_camera_debug, inputs=[gr.State(value=camera.name), camera_debug_checkbox],  outputs=[])
-                        files_checkbox = gr.Checkbox(label="Produce Debug Images", value=self._ctx.debug_files, elem_classes="custom-checkbox")
-                        debug_checkbox = gr.Checkbox(label="Verbose Logging", value=self._ctx.debug, elem_classes="custom-checkbox")
+                with gr.Row():
+#                    with gr.Column(scale=1):
+                    for camera in self._nvr.cameras.values():
+                        if camera.enabled:
+                            camera_debug_checkbox = gr.Checkbox(label=f"Debug {camera.name}",
+                                                    value=camera.debug,
+                                                    elem_classes="custom-checkbox")
+                            camera_debug_checkbox.change(fn=self.update_camera_debug, inputs=[gr.State(value=camera.name), camera_debug_checkbox],  outputs=[])
+                with gr.Row():
+                    files_checkbox = gr.Checkbox(label="Produce Debug Images", value=self._ctx.debug_files, elem_classes="custom-checkbox")
+                    debug_checkbox = gr.Checkbox(label="Verbose Logging", value=self._ctx.debug, elem_classes="custom-checkbox")
                 confidence_threshold_slider.change(self.update_confidence_threshold, confidence_threshold_slider)
                 motion_threshold_slider.change(self.update_motion_threshold, motion_threshold_slider)
                 detection_classes.change(self.update_detection_classes, detection_classes)
@@ -394,156 +394,150 @@ class GUI:
             #        inputs=None,
             #        outputs=[stats]
             #        )
-                
-            demo.load(
-                None,
-                None,
-                None,
-                js="""
-() => {
+
+            _js = f"""
+() => {{
 
   let mosaicPC = null;
   let focusPC = null;
-"""
-+ f'const cameraMap = [{self._camera_map}];' +
-"""
-  async function startMosaic() {
+  const cameraMap = {json.dumps(self._get_cameras_for_js())};
+  async function startMosaic() {{
     const pc = new RTCPeerConnection();
 
     // Same here: recvonly video
-    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("video", {{ direction: "recvonly" }});
 
-    pc.ontrack = (event) => {
+    pc.ontrack = (event) => {{
         const el = document.querySelector("#mosaic");
         if (el) el.srcObject = event.streams[0];
-    };
+    }};
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    const res = await fetch("/signal", {
+    const res = await fetch("/signal", {{
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{
         mode: "mosaic",
         sdp: offer.sdp,
         type: offer.type,
-        }),
-    });
+        }}),
+    }});
 
     const answer = await res.json();
     await pc.setRemoteDescription(answer);
-  }
+  }}
 
   // Helper functions
-  function stopMosaic() {
+  function stopMosaic() {{
     const m = document.querySelector("#mosaic");
-    if (m && m.srcObject) {
+    if (m && m.srcObject) {{
       m.srcObject.getTracks().forEach(t => t.stop());
       m.srcObject = null;
-    }
-  }
+    }}
+  }}
 
-  function showMosaic() {
+  function showMosaic() {{
     const m = document.querySelector("#mosaic");
     m.style.display = "block";
     startMosaic();
-  }
+  }}
 
-  function hideMosaic() {
+  function hideMosaic() {{
     const m = document.querySelector("#mosaic");
     m.style.display = "none";
     stopMosaic();
-  }
+  }}
 
-  function showFocus() {
+  function showFocus() {{
     const f = document.querySelector("#focus");
     f.style.display = "block";
-  }
+  }}
 
-  function hideFocus() {
+  function hideFocus() {{
     const f = document.querySelector("#focus");
     f.style.display = "none";
-    if (f.srcObject) {
+    if (f.srcObject) {{
       f.srcObject.getTracks().forEach(t => t.stop());
       f.srcObject = null;
-    }
-  }
+    }}
+  }}
 
-  async function startFocusedCamera(id) {
+  async function startFocusedCamera(id) {{
     focusPC = new RTCPeerConnection();
-    focusPC.addTransceiver("video", { direction: "recvonly" });
+    focusPC.addTransceiver("video", {{ direction: "recvonly" }});
 
-    focusPC.ontrack = (event) => {
+    focusPC.ontrack = (event) => {{
       const el = document.querySelector("#focus");
       el.srcObject = event.streams[0];
       el.muted = true;
       el.play();
-    };
+    }};
 
     const offer = await focusPC.createOffer();
     await focusPC.setLocalDescription(offer);
 
-    const res = await fetch("/signal", {
+    const res = await fetch("/signal", {{
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+      headers: {{ "Content-Type": "application/json" }},
+      body: JSON.stringify({{
         mode: "single",
         cameraId: id,
         sdp: offer.sdp,
         type: offer.type
-      })
-    });
+      }})
+    }});
 
     const answer = await res.json();
     await focusPC.setRemoteDescription(answer);
-  }
+  }}
 
-  function exitFocusMode() {
+  function exitFocusMode() {{
     hideFocus();
-    if (focusPC) {
+    if (focusPC) {{
       focusPC.close();
       focusPC = null;
-    }
+    }}
     showMosaic();
-  }
+  }}
 
-  async function enterFocusMode(id) {
+  async function enterFocusMode(id) {{
     console.log("Entering focus mode for camera:", id);
     hideMosaic();
     showFocus();
     await startFocusedCamera(id);
-  }
+  }}
 
-  function waitForVideos() {
-    return new Promise(resolve => {
-      const check = () => {
+  function waitForVideos() {{
+    return new Promise(resolve => {{
+      const check = () => {{
         const vids = document.querySelectorAll("video[id^='cam_']");
-        if (vids.length > 0) {
+        if (vids.length > 0) {{
           resolve(vids);
-        } else {
+        }} else {{
           requestAnimationFrame(check);
-        }
-      };
+        }}
+      }};
       check();
-    });
-  }
+    }});
+  }}
 
-  function waitForMosaic() {
-    return new Promise(resolve => {
-      const check = () => {
+  function waitForMosaic() {{
+    return new Promise(resolve => {{
+      const check = () => {{
         const mosaic = document.querySelector("video[id^='mosaic']");
-        if (mosaic) {
+        if (mosaic) {{
           resolve(mosaic);
-        } else {
+        }} else {{
           requestAnimationFrame(check);
-        }
-      };
+        }}
+      }};
       check();
-    });
-  }
+    }});
+  }}
 
-  async function start() {
+  async function start() {{
     const app = document.querySelector("gradio-app");
     const root = app.shadowRoot || document;
 
@@ -555,13 +549,13 @@ class GUI:
     const mosaic = await waitForMosaic();
     console.log("FOUND MOSAIC");
 
-    async function startSingleCamera(id) {
+    async function startSingleCamera(id) {{
     const pc = new RTCPeerConnection();
 
     // Tell the browser we want to RECEIVE video
-    pc.addTransceiver("video", { direction: "recvonly" });
+    pc.addTransceiver("video", {{ direction: "recvonly" }});
 
-    pc.ontrack = (event) => {
+    pc.ontrack = (event) => {{
     const el = document.querySelector("#cam_" + id);
     if (!el) return;
 
@@ -571,50 +565,50 @@ class GUI:
     console.log("SET SRC:", el);
 
     el.play()
-        .then(() => {
+        .then(() => {{
         console.log("PLAY OK, READY STATE:", el.readyState);
-        })
-        .catch((err) => {
+        }})
+        .catch((err) => {{
         console.error("VIDEO PLAY ERROR:", err);
-        });
-    };
+        }});
+    }};
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
-    const res = await fetch("/signal", {
+    const res = await fetch("/signal", {{
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{
         mode: "single",
         cameraId: id,
         sdp: offer.sdp,
         type: offer.type,
-        }),
-    });
+        }}),
+    }});
 
     const answer = await res.json();
     await pc.setRemoteDescription(answer);
-    }
+    }}
 
-    //vids.forEach(v => {
-    //    v.addEventListener("click", () => {
+    //vids.forEach(v => {{
+    //    v.addEventListener("click", () => {{
     //        const id = v.id.replace("cam_", "");
     //        enterFocusMode(id);
-    //    });
-    //});
+    //    }});
+    //}});
     // Clicking the focused video returns to mosaic
     const focusEl = root.querySelector("#focus");
     focusEl.addEventListener("click", exitFocusMode);
 
-    //vids.forEach(v => {
+    //vids.forEach(v => {{
     //  const id = v.id.replace("cam_", "");
     //  startSingleCamera(id);
-    //});
+    //}});
 
     //const mosaic = root.querySelector("#mosaic");
 
-    mosaic.addEventListener("click", (event) => {
+    mosaic.addEventListener("click", (event) => {{
         const rect = mosaic.getBoundingClientRect();
         const x = event.clientX - rect.left;
         const y = event.clientY - rect.top;
@@ -631,20 +625,21 @@ class GUI:
 
         console.log("Clicked camera:", cameraId);
         enterFocusMode(cameraId);
-    });
+    }});
 
     if (mosaic) startMosaic();
-  }
+  }}
 
   start();
-}
+}}
 """
-            )
+
+            demo.load(
+                None,
+                None,
+                None,
+                js=_js)
         return demo
-
-
-
-            #demo.load(fn=self.on_load)
 
     def run(self):
         app = FastAPI()
@@ -694,8 +689,33 @@ class GUI:
             }
 
         # mount Gradio at root
-        app = gr.mount_gradio_app(app, demo, path="/")
-        uvicorn.run(app, host="0.0.0.0", port=7860, log_level="warning")
+        app = gr.mount_gradio_app(
+            app,
+            demo,
+            path="/",
+            auth=[self._ctx.gui_username, self._ctx.gui_password] if all([self._ctx.gui_username, self._ctx.gui_password]) else None,
+            #server_name=self._ctx.bind_address,
+            theme=gr.themes.Soft(),
+            allowed_paths=[self._ctx.directory],
+            css="""
+                .mono-textbox textarea {
+                    font-family: "Courier New", monospace !important;
+                    font-size: x-small !important;
+                }
+                .custom-checkbox span {
+                font-family: 'Courier New', monospace !important;
+                    font-size: small !important;
+                }
+                .gradio-container > footer,
+                .gradio-container footer,
+                footer,
+                div:has(> .footer) {
+                    display: none !important;
+                }
+                """,
+        )
+        
+        uvicorn.run(app, host=self._ctx.bind_address, port=7860, log_level="warning")
     
         try:
             demo.launch(
