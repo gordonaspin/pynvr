@@ -23,7 +23,6 @@ import av
 import cv2
 
 from pynvr.camera.camera import Camera
-from pynvr.constants import TS_FILE_RING_SECONDS
 from pynvr.file_cleaner import FileCleaner
 from pynvr.utils import make_readable_ts, make_ts_string, tags_to_str, RollingAverage
 
@@ -612,16 +611,6 @@ class FFmpegSegmentRecorder(FrameRecorder):
             recorder_config=recorder_config
         )
         self.segments: list[str] = []
-        FileCleaner.add(
-            self.camera.config.segments_dir,
-            "*.ts",
-            timedelta(seconds=TS_FILE_RING_SECONDS),
-            timedelta(seconds=5))
-        FileCleaner.add(
-            self.camera.config.segments_dir,
-            "*.list",
-            timedelta(seconds=TS_FILE_RING_SECONDS),
-            timedelta(seconds=5))
 
     @override
     def should_add_frame(self):

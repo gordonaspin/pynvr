@@ -10,6 +10,9 @@ echo "Project: ${PROJECT}"
 echo "Current ${PROJECT} version: ${VERSION}"
 echo "Hash: ${REMOTE_HASH}"
 
+docker stop pynvr || true
+docker container rm pynvr || true
+
 docker build \
   --build-arg CACHE_BUST=${REMOTE_HASH} \
   --build-arg PROJECT=${PROJECT} \

@@ -11,6 +11,7 @@ from logging import getLogger
 from threading import Event
 
 from pynvr.camera.camera import Camera
+from pynvr.constants import TS_FILE_RING_SECONDS
 from pynvr.file_cleaner import FileCleaner
 from pynvr.processor import FrameProcessor
 from pynvr.reader import Reader, FrameReader
@@ -99,6 +100,17 @@ class NVR:
             "*.log",
             timedelta(**config["keep_logs_timedelta"]),
             timedelta(minutes=5))
+        FileCleaner.add(
+            self.recordings_dir,
+            "*.ts",
+            timedelta(seconds=TS_FILE_RING_SECONDS),
+            timedelta(seconds=5))
+        FileCleaner.add(
+            self.recordings_dir,
+            "*.list",
+            timedelta(seconds=TS_FILE_RING_SECONDS),
+            timedelta(seconds=5))
+
         FileCleaner.add(
             self.logs_dir,
             "*.log",
