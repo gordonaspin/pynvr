@@ -5,6 +5,7 @@
 """
 from pathlib import Path
 from typing import Literal, Union
+from annotated_types import Ge, Le, MultipleOf
 from pydantic import BaseModel
 
 class ConfigValue(BaseModel):
@@ -22,6 +23,29 @@ class ConfigValue(BaseModel):
         if not self.minimum <= self.default <= self.maximum:
             raise ValueError(
                 f"default {self.default} is out of range [{self.minimum}, {self.maximum}]")
+
+    @staticmethod
+    def from_config(default, model_cls, model_field_name) -> "ConfigValue":
+        """ Create a ConfigValue from a Pydantic model field """
+        def get_constraints(model_cls, field_name):
+            field = model_cls.model_fields[field_name]
+            result = {}
+            for item in field.metadata:
+                if isinstance(item, Ge):
+                    result["min"] = item.ge
+                elif isinstance(item, Le):
+                    result["max"] = item.le
+                elif isinstance(item, MultipleOf):
+                    result["step"] = item.multiple_of
+
+            return result
+
+        return ConfigValue(
+            default=default,
+            minimum=get_constraints(model_cls, model_field_name)["min"],
+            maximum=get_constraints(model_cls, model_field_name)["max"],
+            step=get_constraints(model_cls, model_field_name)["step"]
+        )
 
 class CameraResponse(BaseModel):
     """

@@ -6,17 +6,18 @@ Camera representation and wiring for ByteTrack-only motion detection.
 - Tracks night/day state
 - Holds latest frames for UI/debug
 """
-import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from queue import Queue
 
 import numpy as np
 from numpy.typing import NDArray
 
+from pynvr.api.types import ConfigValue
 from pynvr.camera.frame_buffers import FrameBuffers
 from pynvr.camera.motion_detector import MotionDetector
-from pynvr.api.types import ConfigValue
+from pynvr.config.config import CameraConfig, Resolution
 
 @dataclass
 class RecordingState:
@@ -32,46 +33,42 @@ class RecordingState:
     white_ratio: float = 0.0
 
 
-class CameraConfig:
+class CameraInfo:
     """
     Represents the configuration for a camera.
     """
-    def __init__(self, config: dict,
+    def __init__(self, camera_config: CameraConfig,
                  name: str,
-                 logs_dir: str,
-                 recordings_dir: str):
-        cfg = config["cameras"][name]
+                 logs_dir: Path,
+                 recordings_dir: Path):
 
-        width = cfg["resolution"]["width"]
-        height = cfg["resolution"]["height"]
-        self.yolo_confidence: ConfigValue = ConfigValue(
-            default=cfg["yolo_confidence"],
-            minimum=0.1,
-            maximum=1.0,
-            step=0.01)
-        self.name = name
-        self.max_pixels = width * height
-        self.width = width
-        self.height = height
-        self.enabled = cfg["enabled"]
-        self.debug = cfg["debug"]
-        self.url = cfg["url"]
-        self.render_annotations = cfg["render_annotations"]
+        self.resolution: Resolution = camera_config.resolution
+        self.yolo_confidence: ConfigValue = ConfigValue.from_config(
+            default=camera_config.yolo_confidence,
+            model_cls=CameraConfig,
+            model_field_name="yolo_confidence"
+        )
+        self.name: str = name
+        self.max_pixels: int = self.resolution.width * self.resolution.height
+        self.enabled: bool = camera_config.enabled
+        self.debug: bool = camera_config.debug
+        self.url: str = camera_config.url
+        self.render_annotations: str = camera_config.render_annotations
 
         # Directories
-        self.logs_dir = logs_dir
-        self.recordings_dir = os.path.join(recordings_dir, name)
-        self.segments_dir = os.path.join(recordings_dir, "segments", name)
-        self.images_dir = os.path.join(recordings_dir, "images", name)
-        self.metadata_dir = os.path.join(recordings_dir, "metadata", name)
-        self.plates_dir = os.path.join(recordings_dir, "plates", name)
+        self.logs_dir: Path = logs_dir
+        self.recordings_dir: Path = Path(recordings_dir, name)
+        self.segments_dir: Path = Path(recordings_dir, "segments", name)
+        self.images_dir: Path = Path(recordings_dir, "images", name)
+        self.metadata_dir: Path = Path(recordings_dir, "metadata", name)
+        self.plates_dir: Path = Path(recordings_dir, "plates", name)
 
         # Ensure dirs exist
-        os.makedirs(self.recordings_dir, exist_ok=True)
-        os.makedirs(self.segments_dir, exist_ok=True)
-        os.makedirs(self.images_dir, exist_ok=True)
-        os.makedirs(self.metadata_dir, exist_ok=True)
-        os.makedirs(self.plates_dir, exist_ok=True)
+        self.recordings_dir.mkdir(parents=True, exist_ok=True)
+        self.segments_dir.mkdir(parents=True, exist_ok=True)
+        self.images_dir.mkdir(parents=True, exist_ok=True)
+        self.metadata_dir.mkdir(parents=True, exist_ok=True)
+        self.plates_dir.mkdir(parents=True, exist_ok=True)
 
 
 class Camera:
@@ -87,34 +84,35 @@ class Camera:
 
     def __init__(
         self,
-        width: int,
-        height: int,
-        config: dict,
         name: str,
-        logs_dir: str,
-        recordings_dir: str,
+        camera_config: CameraConfig,
+        camera_resolution: Resolution,
+        model_resolution: Resolution,
+        logs_dir: Path,
+        recordings_dir: Path,
     ):
-        self.width = width
-        self.height = height
+        self.resolution: Resolution = camera_resolution
+        #self.width = camera_resolution.width
+        #self.height = camera_resolution.height
         self.start_time = time.time()
 
         # Per-camera config (paths, resolution, flags)
-        self.config = CameraConfig(config, name, logs_dir, recordings_dir)
+        self.camera_info: CameraInfo = CameraInfo(camera_config, name, logs_dir, recordings_dir)
 
         # Frame buffers: full-res + optional YOLO-res
-        self.buffers = FrameBuffers(config, width, height)
+        self.buffers: FrameBuffers = FrameBuffers(camera_resolution, model_resolution)
 
         # ByteTrack-only motion detector
         # Expects camera-specific config with:
         #   track_thresh, match_thresh, track_buffer,
         #   minimum_track_speed, yolo_confidence
-        self.motion = MotionDetector(config["cameras"][name], name)
+        self.motion: MotionDetector = MotionDetector(camera_config, name)
 
         # Recording state machine
-        self.recording_state = RecordingState()
+        self.recording_state: RecordingState = RecordingState()
 
         # Debug flag
-        self.debug: bool = config["cameras"][name]["debug"]
+        self.debug: bool = camera_config.debug
 
         # Latest-frame-wins buffers for UI/debug
         self.latest_frame: NDArray[np.uint8] | None = None

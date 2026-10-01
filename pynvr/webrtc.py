@@ -11,6 +11,7 @@ import numpy as np
 from aiortc.mediastreams import VideoStreamTrack
 from av import VideoFrame
 
+from pynvr.config.config import MosaicConfig
 from pynvr.camera.camera import Camera
 
 logger = getLogger("pynvr.webrtc")
@@ -43,15 +44,15 @@ class MosaicTrack(VideoStreamTrack):
     """
     kind = "video"
 
-    def __init__(self, cameras: List[Camera], mosaic_config: dict):
+    def __init__(self, cameras: List[Camera], mosaic_config: MosaicConfig):
         super().__init__()
-        self._cameras = [camera for camera in cameras if camera.config.enabled]
-        self.rows = mosaic_config["rows"]
-        self.cols = mosaic_config["columns"]
+        self._cameras = [camera for camera in cameras if camera.camera_info.enabled]
+        self.rows = mosaic_config.rows
+        self.cols = mosaic_config.columns
         #self._max_cols = max_cols
 
         # 4K width, height computed dynamically to preserve 4:3 tiles
-        self.mosaic_w = mosaic_config["width"]
+        self.mosaic_w = mosaic_config.resolution.width
         self.mosaic_h = 0  # computed dynamically based on tile height
 
     async def recv(self) -> VideoFrame:

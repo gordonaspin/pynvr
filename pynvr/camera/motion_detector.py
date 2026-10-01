@@ -12,6 +12,7 @@ import numpy as np
 
 from pynvr.byte_track.byte_tracker import BYTETracker
 from pynvr.api.types import ConfigValue
+from pynvr.config.config import CameraConfig
 
 logger = getLogger("pynvr")
 
@@ -40,27 +41,31 @@ class MotionDetector:
     - Expose active_tracks for debug UI
     """
 
-    def __init__(self, cfg: dict, name: str):
+    def __init__(self, camera_config: CameraConfig, name: str):
         self.name = name
-        self.track_threshold: ConfigValue = ConfigValue(
-            default=cfg["track_threshold"],
-            minimum=0.1,
-            maximum=1.0,
-            step=0.01)
-        self.match_threshold: ConfigValue = ConfigValue(
-            default=cfg["match_threshold"],
-            minimum=0.1, maximum=1.0,
-            step=0.01)
-        self.track_buffer: ConfigValue = ConfigValue(
-            default=cfg["track_buffer"],
-            minimum=30,
-            maximum=300,
-            step=1)
-        self.minimum_relative_motion: ConfigValue = ConfigValue(
-            default=cfg["minimum_relative_motion"],
-            minimum=0.05,
-            maximum=0.2,
-            step=0.01)
+        self.track_threshold: ConfigValue = ConfigValue.from_config(
+            default=camera_config.yolo_confidence,
+            model_cls=CameraConfig,
+            model_field_name="track_threshold"
+        )
+
+        self.match_threshold: ConfigValue = ConfigValue.from_config(
+            default=camera_config.match_threshold,
+            model_cls=CameraConfig,
+            model_field_name="match_threshold"
+        )
+
+        self.track_buffer: ConfigValue = ConfigValue.from_config(
+            default=camera_config.track_buffer,
+            model_cls=CameraConfig,
+            model_field_name="track_buffer"
+        )
+
+        self.minimum_relative_motion: ConfigValue = ConfigValue.from_config(
+            default=camera_config.minimum_relative_motion,
+            model_cls=CameraConfig,
+            model_field_name="minimum_relative_motion"
+        )
 
         self.lock: Lock = Lock()
 

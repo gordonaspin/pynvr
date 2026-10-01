@@ -1,6 +1,14 @@
 {
   "url": "https://github.com/mCodingLLC/VideosSampleCode/blob/master/videos/135_modern_logging/",
   "version": 1,
+    "root": {
+    "level": "DEBUG",
+    "handlers": [
+      "stderr", 
+      "file",
+      "log_event_handler"
+    ]
+  },
   "disable_existing_loggers": true,
   "formatters": {
     "production": {
@@ -14,6 +22,9 @@
     "thread detailed": {
       "format": "%(asctime)s.%(msecs)03d %(levelname)s\t%(threadName)s\t%(name)s:%(module)s.%(funcName)s.%(lineno)d\t%(message)s",
       "datefmt": "%Y-%m-%d %H:%M:%S"
+    },
+    "json_formatter": {
+      "()": "pynvr.logger.JSONFormatter"
     }
   },
   "filters": {
@@ -24,15 +35,15 @@
   "handlers": {
     "stderr": {
       "class": "logging.StreamHandler",
-      "level": "INFO",
+      "level": "DEBUG",
       "formatter": "production",
       "stream": "ext://sys.stderr",
       "filters": ["KeywordFilter"]
     },
     "file": {
       "class": "logging.handlers.RotatingFileHandler",
-      "level": "INFO",
-      "formatter": "thread detailed",
+      "level": "DEBUG",
+      "formatter": "json_formatter",
       "filename": "logs/nvr.log",
       "maxBytes": 10000000,
       "backupCount": 3,
@@ -40,7 +51,7 @@
     },
     "log_event_handler": {
       "class": "pynvr.logger.LogEventHandler",
-      "level": "INFO",
+      "level": "DEBUG",
       "formatter": "thread detailed",
       "filters": ["KeywordFilter"]
     }
@@ -51,14 +62,6 @@
       "handlers": [
         "stderr",
         "file"
-      ]
-    },
-    "root": {
-      "level": "INFO",
-      "handlers": [
-        "stderr", 
-        "file",
-        "log_event_handler"
       ]
     },
     "uvicorn.error": {
@@ -78,7 +81,7 @@
       "propagate": false
     },
     "pynvr": {
-      "level": "INFO",
+      "level": "DEBUG",
       "handlers": [
         "stderr",
         "file",
@@ -87,7 +90,6 @@
       "propagate": false
     },
     "pynvr.cleaner": {
-      "level": "INFO",
       "handlers": [
         "stderr",
         "file"
@@ -95,7 +97,6 @@
       "propagate": false
     },
     "pynvr.reader": {
-      "level": "INFO",
       "handlers": [
         "stderr",
         "file",
@@ -104,7 +105,6 @@
       "propagate": false
     },
     "pynvr.recorder": {
-      "level": "INFO",
       "handlers": [
         "stderr",
         "file",
@@ -113,7 +113,6 @@
       "propagate": false
     },
     "pynvr.processor": {
-      "level": "INFO",
       "handlers": [
         "stderr",
         "file",
@@ -122,7 +121,6 @@
       "propagate": false
     },
     "pynvr.webrtc": {
-      "level": "INFO",
       "handlers": [
         "stderr",
         "file"

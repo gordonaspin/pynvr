@@ -5,7 +5,7 @@ from pynvr.app import create_app
 
 def export_schema():
     # Force FastAPI to resolve  Pydantic routes into a raw OpenAPI layout
-    schema = create_app(config={}, nvr=None).openapi()
+    schema = create_app(system_config={}, nvr=None).openapi()
     
     # Save to local json file
     output_path = Path("./openapi.json")

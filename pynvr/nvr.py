@@ -8,9 +8,11 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import timedelta
 from logging import getLogger
+from pathlib import Path
 from threading import Event
 
 from pynvr.camera.camera import Camera
+from pynvr.config.config import SystemConfig, CameraConfig, Resolution
 from pynvr.constants import TS_FILE_RING_SECONDS
 from pynvr.file_cleaner import FileCleaner
 from pynvr.processor import FrameProcessor
@@ -27,11 +29,8 @@ logger = getLogger("pynvr")
 # =========================
 class NVR:
     """ Class representing the control center for the NVR """
-    def __init__(self, config: dict):
+    def __init__(self, system_config: SystemConfig):
 
-        self.recordings_dir: str = config["recordings_directory"]
-        self.logs_dir: str = config["logs_directory"]
-        self.debug: bool = config["debug"]
         self.stop_event: Event = Event()
 
         self.cameras: dict[str, Camera] = {}
@@ -39,82 +38,87 @@ class NVR:
         self.processors: dict[str, FrameProcessor] = {}
         self.recordings: ThreadSafeList = ThreadSafeList()
 
-        camera_resolutions = self.get_all_camera_resolutions(config["cameras"])
-        for name, _ in config["cameras"].items():
-            if not config["cameras"][name]["enabled"]:
+        camera_resolutions = self.get_camera_resolutions(camera_configs=system_config.cameras)
+
+        for name, camera_config in system_config.cameras.items():
+            if not camera_config.enabled:
                 logger.info(f"{name} camera is disabled")
                 continue
-            actual_width, actual_height = camera_resolutions[name]
-            if actual_width is None or actual_height is None:
-                actual_width = config["cameras"][name]["resolution"]["width"]
-                actual_height = config["cameras"][name]["resolution"]["height"]
+            camera_resolution = camera_resolutions[name]
+            if not camera_resolution.is_valid():
+                camera_resolution = Resolution(
+                    width=camera_config.resolution.width,
+                    height=camera_config.resolution.height)
                 logger.warning(
                     f"{name} could not get resolution, " +
                     "falling back to configured resolution " +
-                    f"{actual_width}x{actual_height}")
-            camera = self.cameras[name] = Camera(name=name,
-                                        width=actual_width,
-                                        height=actual_height,
-                                        config=config,
-                                        logs_dir=self.logs_dir,
-                                        recordings_dir=self.recordings_dir,
-                                        )
+                    f"{camera_resolution.width}x{camera_resolution.height}")
+
+            camera = self.cameras[name] = Camera(
+                name=name,
+                camera_config=camera_config,
+                camera_resolution=camera_resolution,
+                model_resolution=system_config.model.resolution,
+                logs_dir=system_config.logs_directory,
+                recordings_dir=system_config.recordings_directory,
+            )
 
             reader = self.frame_readers[name] = FrameReader(
                 camera=camera,
-                model_config=config["model"]["resolution"],
-                produce_segments=config["cameras"][name]["recorder"] == "FFmpegSegment",
+                model_config=system_config.model,
+                produce_segments=camera_config.recorder == "FFmpegSegment",
                 stop_event=self.stop_event)
+
             self.processors[name] = FrameProcessor(
-                config=config["processor"],
+                processor_config=system_config.processor,
                 camera=camera,
                 reader=reader,
                 recorder=FrameRecorderFactory.create(
                     camera=camera,
-                    recorder_name=config["cameras"][name]["recorder"],
+                    recorder_name=camera_config.recorder,
                     stop_event=self.stop_event,
                     add_recording_callback=self.add_recording,
-                    recorder_config=config["processor"]["recorder"],
+                    recorder_config=system_config.processor.recorder,
                 ),
-                model_cfg=config["model"],
+                model_config=system_config.model,
                 stop_event=self.stop_event,
                 )
         FileCleaner.stop_event = self.stop_event
         FileCleaner.add(
-            self.recordings_dir,
+            system_config.recordings_directory,
             "*.mp4",
-            timedelta(**config["keep_recordings_timedelta"]),
+            system_config.keep_recordings_timedelta,
             timedelta(minutes=5))
         FileCleaner.add(
-            self.recordings_dir,
+            system_config.recordings_directory,
             "*.jpg",
-            timedelta(**config["keep_recordings_timedelta"]),
+            system_config.keep_recordings_timedelta,
             timedelta(minutes=5))
         FileCleaner.add(
-            self.recordings_dir,
+            system_config.recordings_directory,
             "*.json",
-            timedelta(**config["keep_recordings_timedelta"]),
+            system_config.keep_recordings_timedelta,
             timedelta(minutes=5))
         FileCleaner.add(
-            self.recordings_dir,
+            system_config.recordings_directory,
             "*.log",
-            timedelta(**config["keep_logs_timedelta"]),
+            system_config.keep_logs_timedelta,
             timedelta(minutes=5))
         FileCleaner.add(
-            self.recordings_dir,
+            system_config.recordings_directory,
             "*.ts",
             timedelta(seconds=TS_FILE_RING_SECONDS),
             timedelta(seconds=5))
         FileCleaner.add(
-            self.recordings_dir,
+            system_config.recordings_directory,
             "*.list",
             timedelta(seconds=TS_FILE_RING_SECONDS),
             timedelta(seconds=5))
 
         FileCleaner.add(
-            self.logs_dir,
+            system_config.logs_directory,
             "*.log",
-            timedelta(**config["keep_logs_timedelta"]),
+            system_config.keep_logs_timedelta,
             timedelta(minutes=5))
 
     def start(self):
@@ -129,9 +133,9 @@ class NVR:
 
         if not self.stop_event.is_set():
             for camera in self.cameras.values():
-                if camera.config.enabled:
-                    self.frame_readers[camera.config.name].start()
-                    self.processors[camera.config.name].start()
+                if camera.camera_info.enabled:
+                    self.frame_readers[camera.camera_info.name].start()
+                    self.processors[camera.camera_info.name].start()
 
 
     def stop(self):
@@ -150,7 +154,7 @@ class NVR:
         """ return array of threads owned by the NVR """
         threads = []
         for camera in self.cameras.values():
-            name = camera.config.name
+            name = camera.camera_info.name
             if self.frame_readers[name].thread is not None:
                 threads.append(self.frame_readers[name].thread)
             if self.processors[name].thread is not None:
@@ -162,11 +166,11 @@ class NVR:
 
         return threads
 
-    def add_recording(self, metadata_file: str):
+    def add_recording(self, metadata_file: Path):
         """ called by recorders to add a new recording """
         self.recordings.append(self._load_event(metadata_file=metadata_file))
 
-    def _load_event(self, metadata_file:str) -> RecordingEvent:
+    def _load_event(self, metadata_file: Path) -> RecordingEvent:
         recording_event = None
 
         with open(metadata_file, "r", encoding="utf-8") as fp:
@@ -193,10 +197,10 @@ class NVR:
 
         start = time.time()
         for camera in self.cameras.values():
-            if camera.config.enabled:
-                for f in glob.glob(f"{camera.config.metadata_dir}/*.json"):
+            if camera.camera_info.enabled:
+                for f in glob.glob(f"{camera.camera_info.metadata_dir}/*.json"):
                     try:
-                        event = self._load_event(f)
+                        event = self._load_event(Path(f))
                         if event:
                             events.append(event)
 
@@ -210,23 +214,26 @@ class NVR:
         logger.debug(f"loaded {len(events)} events in {(time.time() - start):.2f} seconds")
 
 
-    def get_all_camera_resolutions(self,camera_config):
+    def get_camera_resolutions(
+            self,
+            camera_configs: dict[str, CameraConfig]
+            ) -> dict[str, Resolution]:
         """ return dictionary of camera resolutions """
         results = {}
 
         def task(name, url):
             w, h = get_camera_resolution(url)
-            return name, (w, h)
+            return name, Resolution(width=w, height=h)
 
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [
-                executor.submit(task, name, cfg["url"])
-                for name, cfg in camera_config.items() if cfg["enabled"]
+                executor.submit(task, name, camera_config.url)
+                for name, camera_config in camera_configs.items() if camera_config.enabled
             ]
 
             for f in as_completed(futures):
                 name, res = f.result()
-                logger.info(f"{name} camera resolution detected as {res[0]}x{res[1]}")
+                logger.info(f"{name} camera resolution detected as {res.width}x{res.height}")
                 results[name] = res
 
         return results

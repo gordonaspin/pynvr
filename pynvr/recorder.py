@@ -15,6 +15,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from datetime import timedelta
 from logging import getLogger
+from pathlib import Path
 from threading import Event, current_thread
 from typing import override
 from urllib.parse import quote
@@ -23,6 +24,7 @@ import av
 import cv2
 
 from pynvr.camera.camera import Camera
+from pynvr.config.config import RecorderConfig
 from pynvr.file_cleaner import FileCleaner
 from pynvr.utils import make_readable_ts, make_ts_string, tags_to_str, RollingAverage
 
@@ -36,7 +38,7 @@ class FrameRecorderFactory:
         recorder_name: str,
         stop_event: Event,
         add_recording_callback: Callable,
-        recorder_config: dict
+        recorder_config: RecorderConfig
         ):
         """
         Create a FrameRecorder instance based on the specified recorder_name.
@@ -82,13 +84,13 @@ class FrameRecorder:
             camera: Camera,
             stop_event: Event,
             add_recording_callback: Callable,
-            recorder_config: dict
+            recorder_config: RecorderConfig
             ):
         self.camera: Camera = camera
         self.stop_event = stop_event
         self.add_recording_callback: Callable = add_recording_callback
-        self.recorder_config: dict = recorder_config
-        self.max_pre_frames: int = int(20 * recorder_config["pre_duration"])
+        self.recorder_config: RecorderConfig = recorder_config
+        self.max_pre_frames: int = int(20 * recorder_config.pre_duration)
         self.uuid: str = str(uuid.uuid4())
         # Rolling buffer (automatically discards frames past the time limit)
         self.rolling_buffer: deque = deque(maxlen=self.max_pre_frames)
@@ -104,9 +106,9 @@ class FrameRecorder:
         self.thread: threading.Thread | None = None
         self.duration_seconds: float = 0
         self.formatted_duration: str = "0:00:00"
-        self.temporary_media_filename: str = None
-        self.temporary_log_filename: str = None
-        self.list_filename: str = None
+        self.temporary_media_filename: Path = None
+        self.temporary_log_filename: Path = None
+        self.list_filename: Path = None
 
         self.final_fps: int = None
         self.final_tags: dict | None = None
@@ -114,9 +116,9 @@ class FrameRecorder:
         self.final_timestamp_tags_str: str = None
         self.final_start_time: float | None = None
         self.final_end_time: float | None = None
-        self.final_media_filename: str = None
-        self.final_log_filename: str = None
-        self.final_metadata_filename: str = None
+        self.final_media_filename: Path = None
+        self.final_log_filename: Path = None
+        self.final_metadata_filename: Path = None
         self.final_timestamp_name_tags: str = None
         self.final_motion: dict | None = None
 
@@ -164,33 +166,33 @@ class FrameRecorder:
         if not self.can_start():
             return
 
-        start = self.camera.recording_state.recording_start_time
-        self.final_start_time = start - self.recorder_config["pre_duration"]
-        timestamp_str = make_ts_string(self.final_start_time)
-        self.final_fps = self.fps.as_int()
-        self.final_tags = deepcopy(self.camera.motion.active_objects_dict)
-        self.final_motion = self.camera.motion.to_dict()
-        self.final_tags_str = tags_to_str(self.final_tags)
-        self.final_timestamp_tags_str = timestamp_str + \
-            "_" + self.camera.config.name + "_" + self.final_tags_str
-        self.final_media_filename = os.path.join(
-            self.camera.config.recordings_dir,
+        start: float = self.camera.recording_state.recording_start_time
+        self.final_start_time: float = start - self.recorder_config.pre_duration
+        timestamp_str: str = make_ts_string(self.final_start_time)
+        self.final_fps: int = self.fps.as_int()
+        self.final_tags: dict = deepcopy(self.camera.motion.active_objects_dict)
+        self.final_motion: dict = self.camera.motion.to_dict()
+        self.final_tags_str: str = tags_to_str(self.final_tags)
+        self.final_timestamp_tags_str: str = timestamp_str + \
+            "_" + self.camera.camera_info.name + "_" + self.final_tags_str
+        self.final_media_filename = Path(
+            self.camera.camera_info.recordings_dir,
             self.final_timestamp_tags_str + ".mp4")
-        self.final_metadata_filename = os.path.join(
-            self.camera.config.metadata_dir,
+        self.final_metadata_filename = Path(
+            self.camera.camera_info.metadata_dir,
             self.final_timestamp_tags_str + ".json")
-        self.final_log_filename = os.path.join(
-            self.camera.config.logs_dir,
+        self.final_log_filename = Path(
+            self.camera.camera_info.logs_dir,
             self.final_timestamp_tags_str + ".log")
 
         #pylint: disable=consider-using-with
-        self.temporary_media_filename  = tempfile.NamedTemporaryFile(
+        self.temporary_media_filename: Path  = Path(tempfile.NamedTemporaryFile(
             "w+b",
-            dir=self.camera.config.recordings_dir,
+            dir=self.camera.camera_info.recordings_dir,
             suffix=".mp4",
-            delete=False).name
+            delete=False).name)
 
-        self.temporary_log_filename = self.temporary_media_filename + ".log"
+        self.temporary_log_filename: Path = self.temporary_media_filename.with_suffix(".log")
 
         self.seed_buffer()
         self.start_thread()
@@ -198,7 +200,7 @@ class FrameRecorder:
     def seed_buffer(self):
         """Seed the recording queue with frames from the rolling buffer."""
         fps = self.fps.as_int() if self.fps.as_int() > 0 else 20
-        frames = fps * self.recorder_config["pre_duration"]
+        frames = fps * self.recorder_config.pre_duration
         self.record_queue = deque(list(self.rolling_buffer)[-frames:])
 
     def start_thread(self):
@@ -244,10 +246,10 @@ class FrameRecorder:
 
         metadata = self._create_metadata()
 
-        pre = self.recorder_config["pre_duration"]
-        post = self.recorder_config["post_duration"]
+        pre = self.recorder_config.pre_duration
+        post = self.recorder_config.post_duration
         if self.duration_seconds < (pre + post) * 5 / 6:
-            logger.info(f"auto-deleted {self.duration_seconds:.2f} {self.final_media_filename}")
+            logger.info(f"auto-deleted {self.duration_seconds:.2f}s {self.final_media_filename}")
             os.remove(self.final_media_filename)
         else:
             with open(self.final_metadata_filename, "w", encoding="utf-8") as f:
@@ -264,7 +266,7 @@ class FrameRecorder:
         """Override this method in subclasses to report that the recording is complete."""
         logger.info(
             self.name + " " +
-            self.camera.config.name +
+            self.camera.camera_info.name +
             " recording available "
             + self.formatted_duration,
             extra = {
@@ -283,18 +285,18 @@ class FrameRecorder:
         serializable_tags = {k: list(v) for k, v in self.final_tags.items()}
 
         json_data = {
-            "camera": self.camera.config.name,
+            "camera": self.camera.camera_info.name,
             "fps": self.final_fps,
             "tags": serializable_tags,
-            "media_filename": quote(self.final_media_filename),
-            "log_filename": quote(self.final_log_filename),
+            "media_filename": quote(str(self.final_media_filename)),
+            "log_filename": quote(str(self.final_log_filename)),
             "start_time": self.final_start_time,
             "end_time": self.final_end_time,
             "duration": self.duration_seconds,
             "duration_fmt": self.formatted_duration,
             "start_fmt": make_readable_ts(self.final_start_time),
             "end_fmt": make_readable_ts(self.final_end_time),
-            "metadata_filename": quote(self.final_metadata_filename),
+            "metadata_filename": quote(str(self.final_metadata_filename)),
             "recorder_type": self.name,
             "motion": self.final_motion
         }
@@ -308,7 +310,7 @@ class OpenCVFrameRecorder(FrameRecorder):
             camera: Camera,
             stop_event: Event,
             add_recording_callback: Callable,
-            recorder_config: dict
+            recorder_config: RecorderConfig
             ):
         self.name = "OpenCVFrame"
         super().__init__(
@@ -319,14 +321,14 @@ class OpenCVFrameRecorder(FrameRecorder):
 
     def _async_writer_worker(self):
         """Background thread that continuously drains the queue and writes to disk."""
-        current_thread().name = f" {self.camera.config.name} {self.name}Recorder"
+        current_thread().name = f" {self.camera.camera_info.name} {self.name}Recorder"
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         video_writer = cv2.VideoWriter(
             self.temporary_media_filename,
             fourcc,
             self.fps.as_int(),
-            (self.camera.width, self.camera.height)
+            (self.camera.resolution.width, self.camera.resolution.height)
             )
 
         try:
@@ -392,7 +394,7 @@ class OpenCVFrameRecorder(FrameRecorder):
         if self.stop_event.is_set():
             return
 
-        logger.debug(f"{self.camera.config.name} cv2 FrameRecorder started")
+        logger.debug(f"{self.camera.camera_info.name} cv2 FrameRecorder started")
         super().start_recording()  # This will set up the filename and log_filename
 
 
@@ -403,7 +405,7 @@ class AVFFmpegFrameRecorder(FrameRecorder):
             camera: Camera,
             stop_event: Event,
             add_recording_callback: Callable,
-            recorder_config: dict
+            recorder_config: RecorderConfig
             ):
         self.name = "AVFFmpegFrame"
         super().__init__(
@@ -414,13 +416,14 @@ class AVFFmpegFrameRecorder(FrameRecorder):
         )
 
     def _async_writer_worker(self):
-        current_thread().name = f" {self.camera.config.name} {self.name}Recorder"
+        camera_name = self.camera.camera_info.name
+        current_thread().name = f" {camera_name} {self.name}Recorder"
 
         try:
             #pylint: disable=consider-using-with
             log_file = open(self.temporary_log_filename, "w", encoding="utf-8")
             log_file.write(
-                f"{self.name}Recorder started {self.camera.config.name} at {make_readable_ts}\n")
+                f"{self.name}Recorder started {camera_name} at {make_readable_ts}\n")
             log_file.write(f"writing to {self.temporary_media_filename}\n")
             output = av.open(
                 str(self.temporary_media_filename),
@@ -436,8 +439,8 @@ class AVFFmpegFrameRecorder(FrameRecorder):
                 "preset": "ultrafast",
                 "tune": "zerolatency",
             }
-            stream.width = self.camera.width
-            stream.height = self.camera.height
+            stream.width = self.camera.resolution.width
+            stream.height = self.camera.resolution.height
             stream.pix_fmt = "yuv420p"
             stream.codec_context.max_b_frames = 0
             log_file.write(
@@ -487,7 +490,7 @@ class AVFFmpegFrameRecorder(FrameRecorder):
         if self.stop_event.is_set():
             return
 
-        logger.debug(f"{self.camera.config.name} {self.name} FrameRecorder started")
+        logger.debug(f"{self.camera.camera_info.name} {self.name} FrameRecorder started")
         super().start_recording()  # This will set up the filename and log_filename
 
 
@@ -498,7 +501,7 @@ class FFmpegFrameRecorder(FrameRecorder):
             camera: Camera,
             stop_event: Event,
             add_recording_callback: Callable,
-            recorder_config: dict
+            recorder_config: RecorderConfig
             ):
         self.name = "FFmpegFrame"
         super().__init__(
@@ -510,14 +513,14 @@ class FFmpegFrameRecorder(FrameRecorder):
 
     def _async_writer_worker(self):
         """Background thread that continuously drains the queue and writes to disk."""
-        current_thread().name = f" {self.camera.config.name} {self.name}Recorder"
+        current_thread().name = f" {self.camera.camera_info.name} {self.name}Recorder"
 
         command = [
             "ffmpeg",
             "-y",
             "-f", "rawvideo",
             "-pix_fmt", "bgr24",       # Matches OpenCV format
-            "-s", f"{self.camera.width}x{self.camera.height}",
+            "-s", f"{self.camera.resolution.width}x{self.camera.resolution.height}",
             "-r", f"{self.fps.as_int()}",            # Framerate
             "-i", "-",                 # Input from Python pipe
 
@@ -587,7 +590,7 @@ class FFmpegFrameRecorder(FrameRecorder):
         if self.stop_event.is_set():
             return
 
-        logger.debug(f"{self.camera.config.name} {self.name}Recorder started")
+        logger.debug(f"{self.camera.camera_info.name} {self.name}Recorder started")
         super().start_recording()  # This will set up the filename and log_filename
 
 
@@ -601,7 +604,7 @@ class FFmpegSegmentRecorder(FrameRecorder):
             camera: Camera,
             stop_event: Event,
             add_recording_callback: Callable,
-            recorder_config: dict
+            recorder_config: RecorderConfig
             ):
         self.name = "FFmpegSegment"
         super().__init__(
@@ -636,7 +639,7 @@ class FFmpegSegmentRecorder(FrameRecorder):
         if self.stop_event.is_set():
             return
 
-        camera_name = self.camera.config.name
+        camera_name = self.camera.camera_info.name
         recorder_name = self.name
         logger.debug(f"{camera_name} {recorder_name}Recorder started")
         super().start_recording()  # This will set up the filename and log_filename
@@ -647,7 +650,7 @@ class FFmpegSegmentRecorder(FrameRecorder):
         Capture everything needed to finalize this recording,
         without ever reading camera state again later.
         """
-        current_thread().name = f"{self.camera.config.name} {self.name}Recorder"
+        current_thread().name = f"{self.camera.camera_info.name} {self.name}Recorder"
 
         self.final_end_time = time.time()
 
@@ -657,7 +660,7 @@ class FFmpegSegmentRecorder(FrameRecorder):
             end_time=self.final_end_time,
         )
 
-        camera_name = self.camera.config.name
+        camera_name = self.camera.camera_info.name
         recorder_name = self.name
         logger.debug(
             f"{camera_name} {recorder_name} captured {len(self.segments)} segments for recording")
@@ -673,7 +676,7 @@ class FFmpegSegmentRecorder(FrameRecorder):
         self.event.wait()
         self.event.clear()
 
-        self.list_filename = self.final_media_filename + ".list"
+        self.list_filename: Path = self.final_media_filename.with_suffix(".list")
 
         if not self.segments:
             # Nothing to merge → nothing to record
@@ -715,7 +718,7 @@ class FFmpegSegmentRecorder(FrameRecorder):
         try:
             #pylint: disable=consider-using-with
             log_file = open(self.temporary_log_filename, "w", encoding="utf-8")
-            logger.debug(f"{self.camera.config.name} merging {len(self.segments)} segments")
+            logger.debug(f"{self.camera.camera_info.name} merging {len(self.segments)} segments")
             #pylint: disable=consider-using-with
             process = subprocess.Popen(
                 ffmpeg_cmd,
@@ -740,7 +743,7 @@ class FFmpegSegmentRecorder(FrameRecorder):
         Return all .ts segments whose timestamp falls within [start_time, end_time].
         """
         selected: list[tuple[str, float]] = []
-        for f in os.scandir(self.camera.config.segments_dir):
+        for f in os.scandir(self.camera.camera_info.segments_dir):
             if f.name.endswith(".ts"):
                 try:
                     stat_entry = f.stat()
@@ -748,7 +751,7 @@ class FFmpegSegmentRecorder(FrameRecorder):
                         selected.append(
                             (
                                 os.path.join(
-                                    self.camera.config.segments_dir,
+                                    self.camera.camera_info.segments_dir,
                                     f.name),
                                 stat_entry.st_mtime
                             )

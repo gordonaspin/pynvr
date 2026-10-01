@@ -91,7 +91,7 @@ def get_camera_resolution(url: str):
         width, height = map(int, output.split(","))
         return width, height
     except Exception:
-        return None, None
+        return 0, 0
 
 def detect_object_color(roi_bgr, is_night: bool):
     """

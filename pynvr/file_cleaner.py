@@ -14,12 +14,12 @@ logger = getLogger("pynvr.cleaner")
 
 class CleanerConfig:
     """Configuration for a file cleaner instance."""
-    def __init__(self, folder: str, filespec: str, age_seconds: int, period: int):
-        self.folder = folder
-        self.filespec = filespec
-        self.age_seconds = age_seconds
-        self.period_seconds = period
-        self.last_cleanup_time = time.time()
+    def __init__(self, folder: Path, filespec: str, age_seconds: int, period: int):
+        self.folder: Path = folder
+        self.filespec: str = filespec
+        self.age_seconds: int = age_seconds
+        self.period_seconds: int = period
+        self.last_cleanup_time: float = time.time()
 
 class FileCleaner():
     """A file cleaner that runs in a separate thread to delete old files."""
@@ -31,7 +31,7 @@ class FileCleaner():
     lock: Lock = Lock()
 
     @staticmethod
-    def add(folder: str, filespec: str, age: timedelta, period: timedelta):
+    def add(folder: Path, filespec: str, age: timedelta, period: timedelta):
         """
         Add a new folder/filespec to be cleaned up periodically.
         """
@@ -70,9 +70,8 @@ class FileCleaner():
                         continue
 
                     cutoff = now - config.age_seconds
-                    path = Path(config.folder)
 
-                    for file in path.rglob(config.filespec):
+                    for file in config.folder.rglob(config.filespec):
                         # Skip protected or non-files
                         if file in FileCleaner.do_not_delete_set or not file.is_file():
                             continue
@@ -89,8 +88,8 @@ class FileCleaner():
                         try:
                             file.unlink()
                             logger.debug(
-                                "file cleaner deleted: " + 
-                                file + make_readable_ts(stat_entry.st_mtime)
+                                "file cleaner deleted: %s %s", 
+                                file, make_readable_ts(stat_entry.st_mtime)
                             )
                         except Exception:
                             pass  # File may have disappeared or been locked

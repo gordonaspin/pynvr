@@ -6,6 +6,7 @@ import subprocess
 import select
 import time
 from logging import getLogger
+from pathlib import Path
 from queue import Queue, Empty
 from threading import Event, Thread, current_thread
 from typing import override
@@ -15,6 +16,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from pynvr.camera.camera import Camera
+from pynvr.config.config import ModelConfig, Resolution
 from pynvr.utils import RollingAverage
 
 logger = getLogger("pynvr.reader")
@@ -45,13 +47,12 @@ class FrameReader(Reader):
     def __init__(
         self,
         camera: Camera,
-        model_config: dict[str, int],
+        model_config: ModelConfig,
         produce_segments: bool,
         stop_event: Event,
     ):
         self.camera: Camera = camera
-        self.model_width = model_config["width"]
-        self.model_height = model_config["height"]
+        self.resolution: Resolution = model_config.resolution
         self.produce_segments = produce_segments
         self.stop_event: Event = stop_event
 
@@ -59,7 +60,7 @@ class FrameReader(Reader):
         self.yolo_pipe: None | object = None  # file object for YOLO pipe
         self.yolo_read_fd: int | None = None
         self.yolo_write_fd: int | None = None
-        self.log_filename: str | None = None
+        self.log_filename: Path | None = None
         self.log_file: object | None = None
 
         self.thread: Thread | None = None
@@ -96,13 +97,13 @@ class FrameReader(Reader):
         - on stall/error → stop and reopen
         - loop until stop_event is set
         """
-        current_thread().name = f"{self.camera.config.name}FrameReader"
+        current_thread().name = f"{self.camera.camera_info.name}FrameReader"
 
         while not self.stop_event.is_set():
             try:
                 self._open_stream()
             except Exception as e:
-                logger.error(f"{self.camera.config.name} failed to open stream: {e}")
+                logger.error(f"{self.camera.camera_info.name} failed to open stream: {e}")
                 self._cleanup_process()
                 time.sleep(30.0)
                 continue
@@ -113,7 +114,7 @@ class FrameReader(Reader):
             if not self.stop_event.is_set():
                 time.sleep(30.0)
 
-        logger.info(f"{self.camera.config.name} FrameReader main loop exiting")
+        logger.info(f"{self.camera.camera_info.name} FrameReader main loop exiting")
 
     #pylint: disable=too-many-branches
     def _cleanup_process(self):
@@ -123,7 +124,7 @@ class FrameReader(Reader):
         # Process and stdout
         if self.process is not None:
             ret = self.process.poll()
-            logger.info(f"{self.camera.config.name} stopping FrameReader with ret {ret}")
+            logger.info(f"{self.camera.camera_info.name} stopping FrameReader with ret {ret}")
             try:
                 self.process.terminate()
                 self.process.wait(timeout=2)
@@ -200,7 +201,7 @@ class FrameReader(Reader):
         need_yolo_pipe = self._needs_yolo_pipe()
 
         filespec = (
-            os.path.join(self.camera.config.segments_dir, "%Y%m%d_%H%M%S.ts")
+            Path(self.camera.camera_info.segments_dir, "%Y%m%d_%H%M%S.ts")
             if self.produce_segments
             else None
         )
@@ -212,15 +213,15 @@ class FrameReader(Reader):
             self.yolo_read_fd, self.yolo_write_fd = self._make_yolo_pipe()
 
         ffmpeg_cmd = self.build_ffmpeg_cmd(
-            url=self.camera.config.url,
+            url=self.camera.camera_info.url,
             filespec=filespec,
             segment_mode=self.produce_segments,
             yolo_fd=self.yolo_write_fd,
         )
 
-        self.log_filename = os.path.join(
-            self.camera.config.logs_dir,
-            f"{self.camera.config.name}_ffmpeg.log",
+        self.log_filename = Path(
+            self.camera.camera_info.logs_dir,
+            f"{self.camera.camera_info.name}_ffmpeg.log",
         )
         #pylint: disable=consider-using-with
         self.log_file = open(self.log_filename, "a", encoding="utf-8", buffering=1)
@@ -229,14 +230,14 @@ class FrameReader(Reader):
                 self.log_file.write("\n")
             self.log_file.write(f"{item} ")
         self.log_file.write(
-            f"\n--- Starting FFmpeg for {self.camera.config.name} "
+            f"\n--- Starting FFmpeg for {self.camera.camera_info.name} "
             f"{time.strftime('%Y-%m-%d %H:%M:%S')} ---\n"
         )
         self.log_file.flush()
 
         try:
             if need_yolo_pipe:
-                logger.info(f"{self.camera.config.name} starting dual-pipe FrameReader")
+                logger.info(f"{self.camera.camera_info.name} starting dual-pipe FrameReader")
 
                 process = subprocess.Popen(
                     ffmpeg_cmd,
@@ -255,7 +256,7 @@ class FrameReader(Reader):
                 # Wrap read-end
                 self.yolo_pipe = os.fdopen(self.yolo_read_fd, "rb", buffering=0)
             else:
-                logger.info(f"{self.camera.config.name} starting single-pipe FrameReader")
+                logger.info(f"{self.camera.camera_info.name} starting single-pipe FrameReader")
 
                 process = subprocess.Popen(
                     ffmpeg_cmd,
@@ -312,13 +313,13 @@ class FrameReader(Reader):
 
                 if self.process.poll() is not None:
                     logger.warning(
-                        self.camera.config.name +
+                        self.camera.camera_info.name +
                         " ffmpeg exited, breaking reader loop")
                     break
 
                 if fail_count >= 10:
                     logger.warning(
-                        self.camera.config.name +
+                        self.camera.camera_info.name +
                         " full-res reader stalled, restarting after repeated timeouts")
                     break
 
@@ -348,14 +349,14 @@ class FrameReader(Reader):
 
                     if self.process.poll() is not None:
                         logger.warning(
-                            self.camera.config.name +
+                            self.camera.camera_info.name +
                             " ffmpeg exited, breaking YOLO reader loop"
                         )
                         break
 
                     if fail_count >= 10:
                         logger.warning(
-                            self.camera.config.name +
+                            self.camera.camera_info.name +
                             " yolo reader stalled, restarting after repeated timeouts"
                         )
                         break
@@ -390,7 +391,7 @@ class FrameReader(Reader):
             self.frame_queue.put(full_frame)
             self.total_frames += 1
 
-        logger.info(f"{self.camera.config.name} FrameReader loop exiting")
+        logger.info(f"{self.camera.camera_info.name} FrameReader loop exiting")
 
     def _read_exact(self, fd, view, size, timeout=2.0):
         """
@@ -426,19 +427,20 @@ class FrameReader(Reader):
         """
         Lightweight corruption detector to skip obviously bad frames.
         """
+        camera_name = self.camera.camera_info.name
         mean = float(frame.mean())
 
         # All-black or all-white frames are suspicious
         if mean < 1.0 or mean > 254.0:
             logger.warning(
-                f"{self.camera.config.name} mean={mean:.2f} - Detected corrupted frame, dropping"
+                f"{camera_name} mean={mean:.2f} - Detected corrupted frame, dropping"
             )
             return True
 
         # Exposure jump / I-frame jump
         if self._prev_mean is not None and abs(mean - self._prev_mean) > 80:
             logger.warning(
-                f"{self.camera.config.name} exposure jump > 80 - Detected exposure jump, dropping"
+                f"{camera_name} exposure jump > 80 - Detected exposure jump, dropping"
             )
             self._prev_mean = mean
             self._prev_frame = frame.copy()
@@ -448,7 +450,7 @@ class FrameReader(Reader):
             diff = cv2.absdiff(frame, self._prev_frame)
             if diff.mean() > 120.0:
                 logger.warning(
-                    self.camera.config.name +
+                    f"{camera_name} diff.mean={diff.mean():.2f}" +
                     f" diff.mean={diff.mean():.2f}" +
                     " - Detected corrupted frame, dropping"
                 )
@@ -463,8 +465,7 @@ class FrameReader(Reader):
             continuity_diff = self._diff_buf_row.mean()
             if continuity_diff > 150:
                 logger.warning(
-                    self.camera.config.name +
-                    f" continuity_diff.mean={continuity_diff:.2f}" +
+                    f"{camera_name} continuity_diff.mean={continuity_diff:.2f}" +
                     " - Detected corrupted frame, dropping"
                 )
                 self._prev_mean = mean
@@ -479,7 +480,7 @@ class FrameReader(Reader):
     def build_ffmpeg_cmd(
         self,
         url: str,
-        filespec: str | None,
+        filespec: Path | None,
         segment_mode: bool,
         yolo_fd: int | None,
     ) -> list[str]:
@@ -488,10 +489,10 @@ class FrameReader(Reader):
         segments and a YOLO pipe.
         """
 
-        actual_w = self.camera.width
-        actual_h = self.camera.height
-        yolo_w = self.model_width
-        yolo_h = self.model_height
+        actual_w = self.camera.resolution.width
+        actual_h = self.camera.resolution.height
+        yolo_w = self.resolution.width
+        yolo_h = self.resolution.height
 
         need_yolo_pipe = not (actual_w == yolo_w and actual_h == yolo_h)
 
@@ -567,14 +568,14 @@ class FrameReader(Reader):
 
     def _needs_yolo_pipe(self) -> bool:
         return not (
-            self.camera.width == self.model_width
-            and self.camera.height == self.model_height
+            self.camera.resolution.width == self.resolution.width
+            and self.camera.resolution.height == self.resolution.height
         )
 
     def _make_yolo_pipe(self) -> tuple[int, int]:
         read_fd, write_fd = os.pipe()
         logger.debug(
-            f"{self.camera.config.name} created YOLO pipe "
+            f"{self.camera.camera_info.name} created YOLO pipe "
             f"read fd={read_fd}, write fd={write_fd}"
         )
         return read_fd, write_fd

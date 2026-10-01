@@ -8,9 +8,10 @@
 """
 import asyncio
 import bisect
-from collections import deque
+import logging
 import secrets
 import time
+from collections import deque
 from datetime import datetime
 from logging import getLogger
 
@@ -21,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, EventSourceResponse
 from passlib.context import CryptContext
 
+from pynvr.config.config import SystemConfig
 from pynvr.logger import event_log
 from pynvr.nvr import NVR
 from pynvr.webrtc import CameraTrack, MosaicTrack
@@ -110,7 +112,7 @@ def require_user(session_id: str | None = Cookie(None)):
 # -------------------------
 
 #pylint: disable=too-many-statements
-def create_app(config: dict, nvr: NVR):
+def create_app(system_config: SystemConfig, nvr: NVR):
     """
     Create and configure the FastAPI application.
     """
@@ -133,10 +135,10 @@ def create_app(config: dict, nvr: NVR):
 
     @app.post("/login")
     async def login(payload: LoginForm, response: Response):
-        if (payload.username != config["gui_username"]
+        if (payload.username != system_config.gui_username
             or not pwd.verify(
                 payload.password,
-                config["gui_password"])
+                system_config.gui_password)
                 ):
             raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -178,8 +180,8 @@ def create_app(config: dict, nvr: NVR):
         pc = RTCPeerConnection()
 
         if mode == "mosaic":
-            cameras = [camera for camera in nvr.cameras.values() if camera.config.enabled]
-            track = MosaicTrack(cameras, config["mosaic"])
+            cameras = [camera for camera in nvr.cameras.values() if camera.camera_info.enabled]
+            track = MosaicTrack(cameras, system_config.mosaic)
         else:
             camera = nvr.cameras[name]
             track = CameraTrack(camera)
@@ -193,24 +195,24 @@ def create_app(config: dict, nvr: NVR):
 
     @app.get("/api/cameras", response_model=list[CameraResponse])
     def get_cameras(user=Depends(require_user)):
-        return [CameraResponse(name=camera.config.name, debug=camera.config.debug)
-                for camera in nvr.cameras.values() if camera.config.enabled]
+        return [CameraResponse(name=camera.camera_info.name, debug=camera.camera_info.debug)
+                for camera in nvr.cameras.values() if camera.camera_info.enabled]
 
     @app.get("/api/classes", response_model=ClassesResponse)
     def get_classes(user=Depends(require_user)):
-        return ClassesResponse(classes=config["model"]["classes"])
+        return ClassesResponse(classes=system_config.model.classes)
 
     @app.get("/api/system_name", response_model=SystemNameResponse)
     def get_system_name():
-        return SystemNameResponse(system_name=config["system_name"])
+        return SystemNameResponse(system_name=system_config.system_name)
 
     @app.get("/api/mosaic_dimensions", response_model=DimensionsResponse)
     def get_mosaic_dimensions(user=Depends(require_user)):
         return DimensionsResponse(
-            rows=config["mosaic"]["rows"],
-            columns=config["mosaic"]["columns"],
-            width=config["mosaic"]["width"],
-            height=config["mosaic"]["height"]
+            rows=system_config.mosaic.rows,
+            columns=system_config.mosaic.columns,
+            width=system_config.mosaic.resolution.width,
+            height=system_config.mosaic.resolution.height
         )
 
     @app.get("/api/events", response_model=EventsResponse)
@@ -292,7 +294,7 @@ def create_app(config: dict, nvr: NVR):
         processor = nvr.processors[camera_name]
 
         return CameraSettingsResponse(
-            yolo_confidence=vars(camera.config.yolo_confidence),
+            yolo_confidence=vars(camera.camera_info.yolo_confidence),
             track_threshold=vars(camera.motion.track_threshold),
             match_threshold=vars(camera.motion.match_threshold),
             track_buffer=vars(camera.motion.track_buffer),
@@ -307,7 +309,7 @@ def create_app(config: dict, nvr: NVR):
         old_value = None
 
         if setting == "yolo_confidence":
-            attr = getattr(camera.config, setting)
+            attr = getattr(camera.camera_info, setting)
             old_value = attr.value
             attr.value = payload.value
         else:
@@ -333,7 +335,7 @@ def create_app(config: dict, nvr: NVR):
 
         # Update the boolean toggle
         for processor in nvr.processors.values():
-            if processor.camera.config.name == camera_name:
+            if processor.camera.camera_info.name == camera_name:
                 processor.classes[payload.class_name] = payload.value
                 processor.set_selected_classes(processor.classes)
                 break
@@ -359,14 +361,14 @@ def create_app(config: dict, nvr: NVR):
 
         return CameraResponse(
             name=camera_name,
-            debug=camera.config.debug if camera else False
+            debug=camera.camera_info.debug if camera else False
         )
 
     @app.post("/api/settings/debug/{camera_name}", response_model=CameraDebugResponse)
     def set_camera_debug(camera_name: str, payload: SettingValue, user=Depends(require_user)):
         camera = nvr.cameras.get(camera_name)
         logger.info(camera_name + " debug " + str(payload.value))
-        camera.config.debug = payload.value
+        camera.camera_info.debug = payload.value
         return CameraDebugResponse(
             status="ok",
             camera=camera_name,
@@ -376,12 +378,21 @@ def create_app(config: dict, nvr: NVR):
     # Verbose debug
     @app.get("/api/settings/debug", response_model=SettingValue)
     def get_debug(user=Depends(require_user)):
-        return SettingValue(value=nvr.debug)
+        return SettingValue(value=system_config.debug)
 
     @app.post("/api/settings/debug", response_model=SettingValueResponse)
     def set_debug(payload: SettingValue, user=Depends(require_user)):
         logger.info(f"verbose logging {payload.value}")
-        nvr.debug = payload.value
+        system_config.debug = payload.value
+
+        pynvr_logger = getLogger("pynvr")
+        pynvr_logger.setLevel(logging.DEBUG if system_config.debug else logging.INFO)
+
+        for handler in pynvr_logger.handlers:
+            handler.setLevel(logging.DEBUG if system_config.debug else logging.INFO)
+
+        logger.debug(f"verbose logging {payload.value} applied to all handlers")
+
         return SettingValueResponse(
             status="ok",
             value=payload.value
@@ -408,7 +419,7 @@ def create_app(config: dict, nvr: NVR):
                 for processor in nvr.processors.values():
                     camera_status = CameraStatus(
                         ts=time.time(),
-                        name=processor.camera.config.name,
+                        name=processor.camera.camera_info.name,
                         state=processor.streaming_state.name,
                         state_value=processor.streaming_state.value,
                         objects_dict=processor.camera.motion.get_active_objects(),
@@ -464,17 +475,17 @@ def create_app(config: dict, nvr: NVR):
             event_generator(request)
         )
 
-    if config:
+    if system_config:
         app.mount(
             "/recordings",
             AuthStaticFiles(
-                directory=config["recordings_directory"],
+                directory=system_config.recordings_directory,
                 check_dir=True),
             name="recordings")
         app.mount(
             "/logs",
             AuthStaticFiles(
-                directory=config["logs_directory"],
+                directory=system_config.logs_directory,
                 check_dir=True),
             name="logs")
         app.mount(

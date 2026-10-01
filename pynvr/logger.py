@@ -139,7 +139,7 @@ LOG_RECORD_BUILTIN_ATTRS: list[str] = {
 }
 
 
-class MyJSONFormatter(Formatter):
+class JSONFormatter(Formatter):
     """Structured JSON formatter for logging records.
 
     The formatter converts `LogRecord` instances to JSON objects, including
@@ -148,7 +148,7 @@ class MyJSONFormatter(Formatter):
     def __init__(
         self,
         *,
-        fmt_keys: dict[str, str] | None = None) -> "MyJSONFormatter":
+        fmt_keys: dict[str, str] | None = None) -> "JSONFormatter":
         super().__init__()
         self.fmt_keys: dict[str, str] = fmt_keys if fmt_keys is not None else {}
 
@@ -169,10 +169,14 @@ class MyJSONFormatter(Formatter):
         and any extra attributes attached to the LogRecord.
         """
         always_fields: dict[str, str] = {
-            "message": record.getMessage(),
             "timestamp": datetime.fromtimestamp(
                 record.created, tz=timezone.utc
             ).isoformat(),
+            "level": record.levelname,
+            "module": record.module,
+            "funcName": record.funcName,
+            "pathname": f"{record.pathname}:{record.lineno}",
+            "message": record.getMessage(),
         }
         if record.exc_info is not None:
             always_fields["exc_info"] = self.formatException(record.exc_info)
@@ -259,18 +263,12 @@ class LogEventHandler(Handler):
             file_path = getattr(record, "file_path", None)
             message = getattr(record, "message", "")
 
-            fstr = message
-            path = None
-            if file_path:
-                fstr += " " + file_path
-                path = Path(file_path)
-
             entry = LogEntry(
                 timestamp=record.created,
                 level="recording" if recording else record.levelname.lower(),
                 message=message,
                 file_path=file_path if file_path else None,
-                anchor=f"{path.parent.name}/{path.name}" if path else None
+                anchor=f"{file_path.parent.name}/{file_path.name}" if file_path else None
             )
             event_log.append(entry)
 
