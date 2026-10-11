@@ -1,0 +1,218 @@
+{
+    "system_name": "Portside Cameras",
+    "recordings_directory": "recordings",
+    "username": "admin",
+    "password": "password://portside",
+    "keep_recordings_timedelta": {
+        "days": 3
+    },
+    "keep_logs_timedelta": {
+        "days": 1
+    },
+    "bind_address": "0.0.0.0",
+    "port": 7860,
+    "logging_config": "pynvr-logging-config.json",
+    "debug": true,
+    "mosaic": {
+        "rows": 2,
+        "columns": 5,
+        "resolution": {
+            "width": 3840,
+            "height": 1046
+        }
+    },
+    "model": {
+        "resolution": {
+            "width": 640,
+            "height": 640
+        },
+        "classes": {"person": true, "car": true, "truck": true, "bus": true, "cat": false, "dog": true, "bicycle": true, "motorcycle": true},
+        "_comment": "yolo11n.pt  yolo11s.pt  yolov5su.pt yolov8n.pt",
+        "name": "pynvr/model/yolo11n.pt"
+    },
+    "processor": {
+        "detect_every_nth_frame": 1,
+        "device": "cuda",
+        "night_check_period": 5,
+        "recorder": {
+            "startup_delay": 15,
+            "pre_duration": 3,
+            "post_duration": 3
+        }
+    },
+    "cameras": {
+        "B1": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=3&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "_recorder_comment": "FFmpegSegment or FFmpegFrame or OpenCVFrame or AVFFmpegFrame",
+            "recorder": "FFmpegFrame",
+            "_yolo_confidence_comment": "0.1-0.9 confidence",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "always or never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "B2": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=4&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "B3": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=5&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "Entry": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "Exit": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "B45": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=3&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "B56": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "B67": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "Pool": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsidepool.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        },
+        "PGate": {
+            "enabled": true,
+            "url": "rtsp://username:password@portsidepool.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "resolution": {
+                "width": 704,
+                "height": 480
+            },
+            "recorder": "FFmpegFrame",
+            "yolo_confidence": 0.4,
+            "track_threshold": 0.35,
+            "match_threshold": 0.4,
+            "track_buffer": 120,
+            "minimum_relative_motion": 0.08, 
+            "_render_annotations_comment": "never or motion",
+            "render_annotations": "always",
+            "debug": false
+        }
+    }
+}
+

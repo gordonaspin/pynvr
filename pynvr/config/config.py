@@ -93,7 +93,7 @@ class CameraConfig(BaseModel):
     url: str = Field(default="rtsp://username:password@hostname.com/stream")
     resolution: Resolution = Field(default_factory=lambda: Resolution(width=704, height=480))
     recorder: str = Field(default="FFmpegFrame")
-    yolo_confidence: float = Field(default=0.4, ge=0.1, le=1.0, multiple_of=0.1)
+    yolo_confidence: float = Field(default=0.4, ge=0.1, le=1.0, multiple_of=0.01)
     track_threshold: float = Field(default=0.35, ge=0.1, le=1.0, multiple_of=0.01)
     match_threshold: float = Field(default=0.4, ge=0.1, le=1.0, multiple_of=0.01)
     track_buffer: int = Field(default=120, ge=30, le=300, multiple_of=1)
@@ -116,7 +116,7 @@ class SystemConfig(BaseModel):
     recordings_directory: Path = Field(default=Path("recordings"))
     logs_directory: Path = Field(default=Path("logs"))
 
-    logging_config: Path = Field(default=Path("logging-config.json"))
+    logging_config: Path = Field(default=Path("pynvr-logging-config.json"))
 
     keep_recordings_timedelta: timedelta = Field(default=timedelta(days=7))
     keep_logs_timedelta: timedelta = Field(default=timedelta(days=7))

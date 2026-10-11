@@ -24,7 +24,8 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 WORKDIR /build
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install -r requirements.txt
+    pip install -r requirements.txt && \
+    pip install secretstorage jeepney cryptography
 
 
 # ==========================================

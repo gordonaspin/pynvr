@@ -214,7 +214,8 @@ class KeywordFilter(Filter):
     Keywords registered via `add_keyword`/`add_keywords` will be replaced with
     asterisks of the same length when present in a log message.
     """
-    _keywords = []
+    _keywords: set = set()
+
     def __init__(self, name: str="KeywordFilter") -> "KeywordFilter":
         """Initialize the filter with an optional name (passed to base class)."""
         super().__init__(name)
@@ -237,12 +238,12 @@ class KeywordFilter(Filter):
     @classmethod
     def add_keyword(cls, keyword: str) -> None:
         """Register a single keyword to be masked in future log messages."""
-        cls._keywords.append(keyword)
+        cls._keywords.add(keyword)
 
     @classmethod
     def add_keywords(cls, keywords: list[str]) -> None:
         """Register multiple keywords to be masked in future log messages."""
-        cls._keywords.extend(keywords)
+        cls._keywords.update(keywords)
 
 class LogEventHandler(Handler):
     """Custom logging handler that stores log records in an in-memory deque.

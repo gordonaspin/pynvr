@@ -1,11 +1,10 @@
 {
   "name": "pynvr",
-  "version": "2.0.1",
   "private": true,
   "type": "module",
   "scripts": {
-    "prebuild": "python -m pylint $npm_package_name",
-    "build": "python -m build",
+    "prebuild": "./.venv/bin/python -m pylint $npm_package_name",
+    "build": "rm dist/* && python -m build",
     "postbuild": "./build.docker.sh"
   },
   "devDependencies": {

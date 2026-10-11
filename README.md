@@ -1,9 +1,12 @@
-# pynvr - a Python Network Video Recorder
+# pynvr - a Python Network Video Recorder (NVR)
 
 `pynvr` is a capable NVR that records from IP camera streams over RTSP.
 
 ## Overview
-`pynvr` uses ffmpeg to read RTSP streams. Each stream has its own ffmpeg subprocess that reads the stream and simultaneously writes frames to stdout and optionally FFmpeg segment files. The segment files are not re-encoded. The stdout output stream frames are converted to OpenCV2/bgr24 format and resized to a frame size defined in the nvr.json config file. `pynvr` starts a thread per camera to read frames from the stdout stream and puts the latest frame to a per-camera queue. `pynvr` starts a second thread per camera to process the frame from the queue. Frame processing determines motion and object identificaation. When thresholds are met, recording is started. After a period of no motion, the recording is stopped and `pynvr` writes frames to a video file or joins the segments together, re-encoding them to H.264.
+`pynvr` is an intelligent NVR that records video when motion is detected for certain classes of objects such as cars, trucks, people etc.
+`pynvr` uses ffmpeg to read RTSP video streams, each stream is read in the native format and resolution output by the camera stream. The video stream from the camera is read by `pynvr` and processed using YOLO object detection. Detected objects are tracked frame by frame and if moving, `pynvr` creates a recording with metadata.
+
+Each camera has its own ffmpeg subprocess that reads the stream and simultaneously writes frames to stdout and optionally FFmpeg segment files. The segment files are not re-encoded. The stdout output stream frames are converted to OpenCV2/bgr24 format and resized to a YOLO-suitable frame size defined in the pynvr.json config file. `pynvr` starts a thread per camera to read frames from the stdout stream and puts the latest frame to a per-camera queue. `pynvr` starts a second thread per camera to process the frame from the queue. Frame processing determines object identification and tracks object motion. When thresholds are met, recording is started. After a period of no motion, the recording is stopped and `pynvr` writes frames to a video file or joins the segments together, encoding to H.264 in an mp4/m4v container.
 
 `pynvr` is a server process that does not need a client to attach. The GUI implementation is svelte components and Javascript. The `pynvr` GUI has controls to adjust motion-detection thresholds per camera. The GUI presents a mosaic of all enabled cameras, in the dimensions defined in nvr.json. If there are less cameras than rows * colums, black frames will be inserted. Clicking on a frame in the mosaic will zoom in to that camera, and clicking on a zoomed in camera will return to the mosaic.
 
@@ -22,6 +25,11 @@ Install the python build module
 ```bash
 pip install build
 ```
+Install nodejs and npm, if needed
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
 Run the python build
 ```bash
 python -m build
@@ -29,11 +37,6 @@ python -m build
 Generate the OpenAPI spec
 ```bash
 python generate_api.py
-```
-Install nodejs and npm, if needed
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
 ```
 Install frontend project dependencies
 ```bash
@@ -45,90 +48,110 @@ Build the frontend GUI application
 npm run build
 ```
 Install external dependencies
-```
-ffmpeg
+```bash
+sudo apt install ffmpeg
 ```
 ## Usage - Command line options
 
-#### -c | --nvr-config filename.json
-Optional argument to specify the NVR configuration file. Default is nvr.json. See config section for JSON format spec.
-#### -u username -p password
-If supplied `pynvr` will apply those credentials to the RTSP urls specified in your NVR config file. If not supplied, `pyvr` will use the credentials from the RTSP URLs in the NVR config file. If the password begins with "password://" `pynvr` will retrieve the password from the python keyring using password://<username>.
-#### --gui-username username --gui_password password
-If supplied `pynvr` will apply these credentials to the GUI and will present a login challenge that accepts these credentials only. If not supplied `pynvr` uses the same credentials as username/password.
+#### -c | --config pynvr.json
+Optional argument to specify the PYNVR configuration file. Default is pynvr.json. See config section for JSON format spec.
+
 ```bash
-python pynvr/app.py -u rtsp-username -p rtsp-password
+python pynvr/app.py -c pynvr.json
 ```
 ## Docker container usage
 `pynvr` can be built as a docker image, using the provided script which you customize to your needs.
 ```bash
 build.docker.sh
 ```
-The configuration files, nvr.json and logging-config.json are not built into the container. The `pynvr` application and gui frontend are in the container. It is necessary to expose port 7860 to the host and map a host folder for the configuration files and recordings folder., e.g.:
+The configuration files, pynvr.json and pynvr-logging-config.json are not built into the container. The `pynvr` application and gui frontend are in the container. It is necessary to expose port 7860 to the host and map a host folder for the configuration files and recordings folder., e.g.:
 ```bash
-docker run -it -d --restart=always --network host --ipc=host --gpus all --name pynvr -v path/to/a/folder:/home/docker dockerimage <pynvr-options> 
+docker run -it -d --restart=always --network host --ipc=host --gpus all --name pynvr -v path/to/a/folder:/home/docker dockerimage <pynvr-options>
+```
+If you wish to use your host keyring from inside the container, you can map the container DBUS to your host DBUS. The id of the docker user is 1000 and must match your id. Change the USER_UID and GROUP_GID in the Docker file to match yours.
+```bash
+docker run --privileged -it -d  --restart always --network host --ipc=host --gpus all -v /run/user/$(id -u):/run/user/$(id -u) -e DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus --name pynvr -v /home/gordon/Development/pynvr:/home/docker gordonaspin/pynvr:latest
 ```
 
 ## Config
-Configuration is provided in a nvr.json file. "model.resolution" specifies the [x, y] dimensions in pixels to resize frames to for YOLO processing and rendering on the GUI. "model.name" specifies the name of the YOLO model to use. "model.classes" is an array of COCO names of object classes to detect in the image processing. Each camera is named and specifies the RTSP URL and per-camera resolution, motion detection parameters, enabled and debug flags and which recorder type to use.
+`pynvr` is configuration-driven. Most configuration values have sensible defaults which can be seen in pynvr/config/config.py. Those with defaults can be omitted from the config file.
+Some configuration items are UI-accessible as commented here.
 ```json
 {
-    "system_name": "Security Cameras",
-    "recordings_directory": "recordings",
-    "keep_recordings_timedelta": {
+    "system_name": "Security Cameras",                  // The system name is displayed on the UI for branding
+    "recordings_directory": "recordings",               // path to folder for recordings and metadata file creation
+    "username": "admin",                                // username used to authenticate to cameras
+    "password": "password://undefined",                 // password used to authenticate to camera.
+                                                        // if the value starts with "password://", the remainder of the value will be
+                                                        // retrieved from the python keyring using "password://value"
+                                                        // e.g. "password://someusername" results in a call keyring.get_password("password://value")
+    "gui_username": "admin",                            // optional username for UI, if not specified it defaults to username for cameras
+    "gui_password": "somepassword",                     // optional password for UI, if not specified it defaults to password for cameras with same keyring behavior
+    "keep_recordings_timedelta": {                      // how long to keep recordings - as a python timedelta
         "days": 3
     },
-    "keep_logs_timedelta": {
+    "keep_logs_timedelta": {                            // how long to keep logs
         "days": 1
     },
-    "bind_address": "0.0.0.0",
-    "port": 7860,
-    "logging_config": "logging-config.json",
-    "debug": false,
-    "mosaic": {
-        "rows": 1,
-        "columns": 2,
-        "width": 3840,
-        "height": 1046
+    "bind_address": "0.0.0.0",                          // network address to bind the UI server
+    "port": 7860,                                       // network port the UI server listens on
+    "logging_config": "pynvr-logging-config.json",      // name of the logging config file
+    "debug": true,                                      // debug mode on/off, UI-accessible
+
+    "mosaic": {                                         // configuration of the video mosaic in the UI
+        "rows": 2,
+        "columns": 5,
+        "resolution": {                                 // resolution of the mosaic
+            "width": 3840,
+            "height": 1046
+        }
     },
-    "model": {
-        "resolution": {
+    "model": {                                          // YOLO model configuration
+        "name": "pynvr/model/yolo11n.pt"                // path to YOLO model file
+        "resolution": {                                 // resolution to scale camera frames to for object detection
             "width": 640,
             "height": 640
         },
-        "classes": {"person": true, "car": true, "truck": true, "bus": true, "cat": false, "dog": true, "bicycle": true, "motorcycle": true},
-        "_comment": "yolo11n.pt  yolo11s.pt  yolov5su.pt yolov8n.pt",
-        "name": "pynvr/model/yolo11n.pt"
+        "classes": {                                    // names of coco object class names to detect, with enable/disable flag, UI-accessible
+            "person": true,
+            "car": true,
+            "truck": true,
+            "bus": true,
+            "cat": false,
+            "dog": true,
+            "bicycle": true,
+            "motorcycle": true
+            },
     },
-    "processor": {
-        "detect_every_nth_frame": 1,
-        "device": "cuda",
-        "night_check_period": 5,
-        "recorder": {
-            "startup_delay": 15,
-            "pre_duration": 3,
-            "post_duration": 3
+    "processor": {                                      // Frame processor configuration
+        "detect_every_nth_frame": 1,                    // how often to run YOLO, adjust according to device and CPU utilization
+        "device": "cuda",                               // What device to use for YOLO, cuda for NVDIA, mps for Apple Silicon, cpu for cpu only
+        "night_check_period": 5,                        // period in minutes to check for day or night
+        "recorder": {                                   // recorder configuration
+            "startup_delay": 15,                        // period in seconds to suppress object detection and recording after start-up 
+            "pre_duration": 3,                          // pre-roll in seconds to record when motion detected
+            "post_duration": 3                          // post-roll in seconds to continue recording when motion stopped
         }
     },
-    "cameras": {
-        "C1": {
-            "enabled": true,
+    "cameras": {                                        // camera configurations
+        "C1": {                                         // name of camera and camera configuration
+            "enabled": true,                            // enabled, true/false
             "url": "rtsp://username:password@hostname.com:554/cam/realmonitor?channel=3&subtype=1",
-            "resolution": {
+                                                        // RTSP url for camera. The username:password values will be replaced with those provided earlier
+                                                        // The example here is for a Dahua camera second video stream 
+            "resolution": {                             // resolution configuration for the stream. pynvr will probe for the actual camera resolution
+                                                        // and use these values only as a fallback.
                 "width": 704,
                 "height": 480
             },
-            "_recorder_comment": "FFmpegSegment or FFmpegFrame or OpenCVFrame or AVFFmpegFrame",
-            "recorder": "FFmpegFrame",
-            "_yolo_confidence_comment": "0.1-0.9 confidence",
-            "yolo_confidence": 0.4,
-            "track_threshold": 0.35,
-            "match_threshold": 0.4,
-            "track_buffer": 120,
-            "minimum_relative_motion": 0.08, 
-            "_render_annotations_comment": "always or never or motion",
-            "render_annotations": "always",
-            "debug": false
+            "recorder": "FFmpegFrame",                  // type of recorder to use, can be FFmpegSegment or FFmpegFrame or OpenCVFrame or AVFFmpegFrame
+            "yolo_confidence": 0.4,                     // YOLO confidence threshold for object detection, UI-accessible, range 0.1-1.0, step 0.01
+            "track_threshold": 0.35,                    // Used to create motion tracks, UI-accessible, range 0.1-1.0, step 0.01
+            "match_threshold": 0.4,                     // Used to match tracks, UI-accessible, range 0.1-1.0, step 0.01
+            "track_buffer": 120,                        // number of frames to keep tracks, UI-accessible, range 30-300, step 1
+            "minimum_relative_motion": 0.08,            // threshold for motion detection, UI-accessible, range 0.05-0.2, step 0.01
+            "render_annotations": "always",             // draw boxes for detected objects, "always" (default), "never" or "motion"
+            "debug": false                              // render debug panel for camera, UI-accessible
         },
         "C2": {
             "enabled": true,
@@ -148,19 +171,18 @@ Configuration is provided in a nvr.json file. "model.resolution" specifies the [
             "debug": false
         },
         ...
+    }
 }
+
+
 
 ```
 ### Detailed usage
 ```bash
-Usage: app.py -d <directory> -u -p [options]
+Usage: app.py --config pynvr.json
 
 Options:
   -c, --nvr-config <file>         NVR config file  [defaults to nvr.json]
-  -u, --username <username>       NVR/Camera username, will override what is specified in the --nvr-config file
-  -p, --password <password>       NVR/Camera password, will override what is specified in the --nvr-config file
-  --gui-username <GUI username>   GUI authorization username
-  --gui-password <GUI password>   GUI authorization password
   --version                       Show the version and exit.
   -h, --help                      Show this message and exit.
 ```
@@ -168,47 +190,54 @@ Options:
 `pynvr` displays yolo boxes when there is motion that is of a recognized object. `pynvr` displays the current state of recording and fps information on the top left of the frame in the UI.
 
 ### Recordings and Metadata
-`pynvr` creates recordings using ffmpeg .ts segment files or frames. `pynvr` creates .json metadata for each recording which details the start/stop time, the objects captured, etc.
+`pynvr` creates recordings using ffmpeg .ts segment files or frames. `pynvr` creates .json metadata for each recording which details the start/stop time, the objects captured, etc. With the exception of segment recording, `pynvr` yolo detections drawn on the frame are saved in recordings.
 
 ### Recorder types
-`pynvr` has 4 recorder types; FFmpegSegment, FFmpegFrame, OpenCVFrame and AVFFmpegFrame.
+`pynvr` has 4 recorder types:
+- FFmpegSegment
+- FFmpegFrame
+- OpenCVFrame
+- AVFFmpegFrame.
 #### FFMpegSegment
 The FFMpegSegment recorder makes recordings from the segment files produced by FFMpeg. It is a recording of what the camera saw without any overlays indicating objects seen moving.
-#### FFmpegFrame or OpenCVFrame or AVFFmpegFrame
-FFmpegFrame or OpenCVFrame or AVFFmpegFrame are functionally equivalent, using different technologies. Each records frames that include overlays of object classes detected and yolo markup etc. The FFMpegFrame recorder passes frames at their recorded pace to FFmpeg over stdin. The OpenCVFrame recorder uses OpenCV to create the mp4 video file followed by an FFMpeg transformation to make the mp4 streamable. The AVFFmpegFrame recorder uses PyAV to create the recording from the frames, which uses FFMpeg under the covers.
+#### FFmpegFrame, OpenCVFrame and AVFFmpegFrame
+FFmpegFrame, OpenCVFrame and AVFFmpegFrame are functionally equivalent, just using different technologies. Each records frames that include overlays of object classes detected and YOLO markup etc. The FFMpegFrame recorder passes frames at their recorded pace to FFmpeg over stdin. The OpenCVFrame recorder uses OpenCV to create the mp4 video file followed by an FFMpeg transformation to make the mp4 streamable. The AVFFmpegFrame recorder uses PyAV to create the recording from the frames, which uses FFMpeg under the covers.
 
 ### Logging
-`pynvr` uses python logging to write to log files, configured by the logging-config.json file. Passwords passed in on the command line or fetch from the keyring are filtered from logs. `pynvr` also produces log files per camera attached to each of the ffmpeg sub-processes and a log file per recording merge.
+`pynvr` uses python logging to write to log files, configured by the pynvr-logging-config.json file. Passwords are filtered from logs. `pynvr` also produces log files per camera attached to each of the ffmpeg sub-processes and a log file per recording merge.
 
 ## Architecture / Design
 `pynvr` implements an efficient, robust pipeline per camera for motion and object detection and recording file creation. The pipeline is as follows:
 ```code
                          +---------------------------------------+
-                         |     ffmpeg reader sub-process         +
-                         | writes to mpeg segment files          +
-                         | writes raw downsized frames to stdout +
+                         |     ffmpeg reader sub-process         |
+                         | writes to mpeg segment files          |
+                         | writes YOLO-sized frames to a pipe    |
+                         | writes raw frames to stdout           |
+                         | (only writes to stdout if YOLO and    |
+                         | camera resolutions match)             |
                          +---------------------------------------+
                                             |
                                             v
                          +---------------------------------------+
-                         |         frame reader thread           +
-                         | reads frames from stdout              +
-                         | enqueues frame, lastest frame wins    +
+                         |         frame reader thread           |
+                         | reads frames from stdout (and pipe)   |
+                         | enqueues frame, lastest frame wins    |
                          +---------------------------------------+
                                             |
                                             v
                          +---------------------------------------+      +--------------------------------------+      +--------------------------------------+
-                         |       frame processor thread          +      +      FastAPI uvicorn application.    +      + Svelte UI and WebRTC GUI uses frame  +
-                         | gets frame from queue                 + <--- + hosts REST endpoints, serves static  + <--- + from server and renders frame to GUI +
-                         | detects motion and objects.           +      + files, sends SSE events to browser   +      + receives realtime events from server +
+                         |       frame processor thread          |      |      FastAPI uvicorn application.    |      | Svelte UI and WebRTC GUI uses frame  |
+                         | gets frame from queue                 | <--- | hosts REST endpoints, serves static  | <--- | from server and renders frame to GUI |
+                         | detects objects, tracks motion        |      | files, sends SSE events to browser   |      | receives realtime events from server |
                          +---------------------------------------+      +--------------------------------------+      +--------------------------------------+
                                             |
                                             v
                          +---------------------------------------+
-                         |              recorders.               +
-                         | asynchronously merge mpeg segment     +
-                         | files or frames and create MP4        +
-                         | recording, create metadata            +
+                         |              recorders                |
+                         | asynchronously merge mpeg segment     |
+                         | files or frames and create MP4        |
+                         | recording, create metadata            |
                          +---------------------------------------+
 
 ```

@@ -44,7 +44,7 @@
       "class": "logging.handlers.RotatingFileHandler",
       "level": "DEBUG",
       "formatter": "json_formatter",
-      "filename": "logs/nvr.log",
+      "filename": "logs/pynvr.log",
       "maxBytes": 10000000,
       "backupCount": 3,
       "filters": ["KeywordFilter"]

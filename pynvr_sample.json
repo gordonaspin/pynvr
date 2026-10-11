@@ -1,6 +1,8 @@
 {
     "system_name": "Security Cameras",
     "recordings_directory": "recordings",
+    "username": "admin",
+    "password": "password://undefined",
     "keep_recordings_timedelta": {
         "days": 3
     },
@@ -10,12 +12,14 @@
     "bind_address": "0.0.0.0",
     "port": 7860,
     "logging_config": "logging-config.json",
-    "debug": false,
+    "debug": true,
     "mosaic": {
         "rows": 2,
-        "columns": 2,
-        "width": 3840,
-        "height": 1046
+        "columns": 5,
+        "resolution": {
+            "width": 3840,
+            "height": 1046
+        }
     },
     "model": {
         "resolution": {
