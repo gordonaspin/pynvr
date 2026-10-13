@@ -1,10 +1,11 @@
 """ parse command line, set up NVR and FastAPI application """
-from asyncio import CancelledError
 import json
 import logging
-from pathlib import Path
 import signal
 import socket
+from asyncio import CancelledError
+from pathlib import Path
+from time import sleep
 
 import click
 import uvicorn
@@ -33,7 +34,7 @@ def socket_available(host, port):
         try:
             sock.bind((host, port))
         except OSError:
-            logger.error(f"socket {host}:{port} is already in use")
+            logger.error(f"socket {host}:{port} is in use")
             return False
     return True
 
@@ -61,8 +62,10 @@ def main(
 
     logger.info("starting pynvr")
 
-    if not socket_available(system_config.bind_address, system_config.port):
-        return
+    while not socket_available(system_config.bind_address, system_config.port):
+        logger.info(
+            f"waiting 60s for socket {system_config.bind_address}:{system_config.port} ...")
+        sleep(60)
 
     NVR_OBJ = nvr = NVR(system_config)
     app = create_app(system_config, nvr)

@@ -43,7 +43,7 @@
     "cameras": {
         "B1": {
             "enabled": true,
-            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=3&subtype=1",
+            "url": "rtsp://username:password@portsideb3.noip.me:8554/cam/realmonitor?channel=3&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -62,7 +62,7 @@
         },
         "B2": {
             "enabled": true,
-            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=4&subtype=1",
+            "url": "rtsp://username:password@portsideb3.noip.me:8554/cam/realmonitor?channel=4&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -79,7 +79,7 @@
         },
         "B3": {
             "enabled": true,
-            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=5&subtype=1",
+            "url": "rtsp://username:password@portsideb3.noip.me:8554/cam/realmonitor?channel=5&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -96,7 +96,7 @@
         },
         "Entry": {
             "enabled": true,
-            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "url": "rtsp://username:password@portsideb3.noip.me:8554/cam/realmonitor?channel=2&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -113,7 +113,7 @@
         },
         "Exit": {
             "enabled": true,
-            "url": "rtsp://username:password@portsideb3.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "url": "rtsp://username:password@portsideb3.noip.me:8554/cam/realmonitor?channel=1&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -130,7 +130,7 @@
         },
         "B45": {
             "enabled": true,
-            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=3&subtype=1",
+            "url": "rtsp://username:password@portsideshed.noip.me:8554/cam/realmonitor?channel=3&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -147,7 +147,7 @@
         },
         "B56": {
             "enabled": true,
-            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "url": "rtsp://username:password@portsideshed.noip.me:8554/cam/realmonitor?channel=2&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -164,7 +164,7 @@
         },
         "B67": {
             "enabled": true,
-            "url": "rtsp://username:password@portsideshed.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "url": "rtsp://username:password@portsideshed.noip.me:8554/cam/realmonitor?channel=1&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -181,7 +181,7 @@
         },
         "Pool": {
             "enabled": true,
-            "url": "rtsp://username:password@portsidepool.noip.me:554/cam/realmonitor?channel=1&subtype=1",
+            "url": "rtsp://username:password@portsidepool.noip.me:8554/cam/realmonitor?channel=1&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480
@@ -198,7 +198,7 @@
         },
         "PGate": {
             "enabled": true,
-            "url": "rtsp://username:password@portsidepool.noip.me:554/cam/realmonitor?channel=2&subtype=1",
+            "url": "rtsp://username:password@portsidepool.noip.me:8554/cam/realmonitor?channel=2&subtype=1",
             "resolution": {
                 "width": 704,
                 "height": 480

@@ -19,7 +19,7 @@ class CleanerConfig:
         self.filespec: str = filespec
         self.age_seconds: int = age_seconds
         self.period_seconds: int = period
-        self.last_cleanup_time: float = time.time()
+        self.last_cleanup_time: float = 0.0
 
 class FileCleaner():
     """A file cleaner that runs in a separate thread to delete old files."""
@@ -66,7 +66,10 @@ class FileCleaner():
             with FileCleaner.lock:
                 for config in FileCleaner.cleaner_config.values():
                     # Skip configs that are not due yet
-                    if now - config.last_cleanup_time < config.period_seconds:
+                    if (
+                        config.last_cleanup_time > 0.0 and
+                        now - config.last_cleanup_time < config.period_seconds
+                    ):
                         continue
 
                     cutoff = now - config.age_seconds

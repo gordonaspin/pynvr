@@ -123,6 +123,7 @@ class SystemConfig(BaseModel):
 
     bind_address: str = Field(default="0.0.0.0")
     port: int = Field(default=7860)
+    ffmpeg_timeout: int = Field(default=60)
 
     mosaic: MosaicConfig = Field(default_factory=MosaicConfig)
 

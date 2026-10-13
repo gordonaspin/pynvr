@@ -38,7 +38,9 @@ class NVR:
         self.processors: dict[str, FrameProcessor] = {}
         self.recordings: ThreadSafeList = ThreadSafeList()
 
-        camera_resolutions = self.get_camera_resolutions(camera_configs=system_config.cameras)
+        camera_resolutions = self.get_camera_resolutions(
+            camera_configs=system_config.cameras,
+            timeout=system_config.ffmpeg_timeout)
 
         for name, camera_config in system_config.cameras.items():
             if not camera_config.enabled:
@@ -67,7 +69,8 @@ class NVR:
                 camera=camera,
                 model_config=system_config.model,
                 produce_segments=camera_config.recorder == "FFmpegSegment",
-                stop_event=self.stop_event)
+                stop_event=self.stop_event,
+                timeout=system_config.ffmpeg_timeout)
 
             self.processors[name] = FrameProcessor(
                 processor_config=system_config.processor,
@@ -216,13 +219,14 @@ class NVR:
 
     def get_camera_resolutions(
             self,
-            camera_configs: dict[str, CameraConfig]
+            camera_configs: dict[str, CameraConfig],
+            timeout: int
             ) -> dict[str, Resolution]:
         """ return dictionary of camera resolutions """
         results = {}
 
         def task(name, url):
-            w, h = get_camera_resolution(url)
+            w, h = get_camera_resolution(url, timeout=timeout)
             return name, Resolution(width=w, height=h)
 
         with ThreadPoolExecutor(max_workers=10) as executor:

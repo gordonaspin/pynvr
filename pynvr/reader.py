@@ -17,7 +17,7 @@ from numpy.typing import NDArray
 
 from pynvr.camera.camera import Camera
 from pynvr.config.config import ModelConfig, Resolution
-from pynvr.utils import RollingAverage
+from pynvr.utils import RollingAverage, make_ts_string
 
 logger = getLogger("pynvr.reader")
 
@@ -50,11 +50,13 @@ class FrameReader(Reader):
         model_config: ModelConfig,
         produce_segments: bool,
         stop_event: Event,
+        timeout: int = 60,
     ):
         self.camera: Camera = camera
         self.resolution: Resolution = model_config.resolution
         self.produce_segments = produce_segments
         self.stop_event: Event = stop_event
+        self.timeout: int = timeout
 
         self.process: subprocess.Popen | None = None
         self.yolo_pipe: None | object = None  # file object for YOLO pipe
@@ -221,7 +223,8 @@ class FrameReader(Reader):
 
         self.log_filename = Path(
             self.camera.camera_info.logs_dir,
-            f"{self.camera.camera_info.name}_ffmpeg.log",
+            make_ts_string(time.time()) + "_" +
+            self.camera.camera_info.name + "_ffmpeg.log",
         )
         #pylint: disable=consider-using-with
         self.log_file = open(self.log_filename, "a", encoding="utf-8", buffering=1)
@@ -294,6 +297,7 @@ class FrameReader(Reader):
             return
 
         fail_count = 0
+        first_frame = True
 
         while (
             not self.stop_event.is_set()
@@ -301,12 +305,24 @@ class FrameReader(Reader):
             and self.process.stdout is not None
             and not self.process.stdout.closed
         ):
-            # 1. Full-res frame
-            raw_full = self._read_exact(
-                self.process.stdout.fileno(),
-                self.camera.buffers.read_view_full,
-                self.camera.buffers.full_frame_size,
-            )
+            if first_frame:
+                logger.debug(f"{self.camera.camera_info.name} waiting for first frame...")
+                raw_full = self._read_exact(
+                    self.process.stdout.fileno(),
+                    self.camera.buffers.read_view_full,
+                    self.camera.buffers.full_frame_size,
+                    timeout=self.timeout
+                )
+                if raw_full is not None:
+                    logger.debug(f"{self.camera.camera_info.name} first frame received")
+                    first_frame = False
+            else:
+                # 1. Full-res frame
+                raw_full = self._read_exact(
+                    self.process.stdout.fileno(),
+                    self.camera.buffers.read_view_full,
+                    self.camera.buffers.full_frame_size,
+                )
 
             if raw_full is None:
                 fail_count += 1

@@ -3,10 +3,13 @@ import subprocess
 import time
 from collections import defaultdict, deque
 from datetime import datetime
+from logging import getLogger
 from math import sqrt
 
 import cv2
 import numpy as np
+
+logger = getLogger("pynvr")
 
 class RollingAverage:
     """ Class to compute rolling average """
@@ -72,10 +75,10 @@ def tags_to_str(tags: defaultdict[set]):
         parts.append(f"{object_str}-{color_str}")
     return "_".join(parts)
 
-def get_camera_resolution(url: str):
+def get_camera_resolution(url: str, timeout: int = 60) -> tuple[int, int]:
     """ run ffprobe to get camera stream resolution """
     ffprobe_cmd = [
-        "timeout 5s ffprobe",
+        f"timeout {timeout}s ffprobe",
         "-v error",
         "-rtsp_transport tcp",
         "-analyzeduration 0",
@@ -88,6 +91,7 @@ def get_camera_resolution(url: str):
     ffprobe_cmd_str = " ".join(ffprobe_cmd)
     try:
         output = subprocess.check_output(ffprobe_cmd_str, shell=True).decode().strip()
+        logger.debug(f"ffprobe output for {url}: {output}")
         width, height = map(int, output.split(","))
         return width, height
     except Exception:
