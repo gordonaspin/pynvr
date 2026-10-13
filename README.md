@@ -95,6 +95,7 @@ Some configuration items are UI-accessible as commented here.
     },
     "bind_address": "0.0.0.0",                          // network address to bind the UI server
     "port": 7860,                                       // network port the UI server listens on
+    "ffmpeg_timeout": 60,                               // timeout used to manage/retry slow network camera connections
     "logging_config": "pynvr-logging-config.json",      // name of the logging config file
     "debug": true,                                      // debug mode on/off, UI-accessible
 
@@ -251,3 +252,10 @@ FFmpegFrame, OpenCVFrame and AVFFmpegFrame are functionally equivalent, just usi
 `SvelteKit` (typescript/javascript) is used to create the user interface with Javascript, HTML markup and CSS.
 `WebRTC` is used to stream video content to the Mosaic.svelte component in the browser.
 `SSE or Server Side Events` is used to push updates to the browser. It is used for camera status displayed as a <div> overlay on the camera image in the Mosaic.svelte component. It is also used to push server logs to the browser EventLog component and recording event metadata to the browser that are subsequently fed to the EventInfo.svelte component and the MediaPlayer component.
+
+### Troubleshooting
+`pynvr` writes logs of everything it does, including ffmpeg logs on a per-camera basis. Logging is configured in the pynvr-logging-config file and follows the python logging dict config model. Network failures connecting to cameras and reading RTSP streams are handled with sensible retries.
+
+Some modem routers use an Application Layer Gateway to perform packet inspection on RTSP traffic. I have found this to be troublesome if enabled as it burdens the modem router CPU and impacts traffic flow. My recommendation is to disable the ALG features of your modem router. If you cannot disable it, or your ISP does not permit it, then move the RTSP network traffic from port 554 to something like port 8554. This will typically bypass any triggering of the ALG module in the modem router. This would mean moving your cameras or NVRs to service RTSP connections on port 8554 and opening up port 8554 on your modem router to map to the camera on the internal network (if needed).
+
+In my community, we have 3 distinct NVR systems, each with a number of cameras. These NVR systems are internet-connected via their own modem router. In this scenario, I run pynvr in the cloud and it connects through each modem on port 8554 and each modem router uses port forwarding to connect to the NVR that is behind it also on port 8554. This technique completely bypasses the ALG "feature" imposed by our ISP on the modem routers.
