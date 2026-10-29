@@ -64,8 +64,8 @@ def main(
 
     while not socket_available(system_config.bind_address, system_config.port):
         logger.info(
-            f"waiting 60s for socket {system_config.bind_address}:{system_config.port} ...")
-        sleep(60)
+            f"waiting for socket {system_config.bind_address}:{system_config.port} ...")
+        sleep(5)
 
     NVR_OBJ = nvr = NVR(system_config)
     app = create_app(system_config, nvr)

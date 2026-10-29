@@ -1,6 +1,7 @@
 """
 Frame reader for handling video stream processing.
 """
+import json
 import os
 import subprocess
 import select
@@ -38,6 +39,46 @@ class Reader:
         """ get frame """
         raise NotImplementedError()
 
+    @classmethod
+    def get_camera_resolution(cls, camera_name: str, url: str, timeout: int = 60) -> tuple[int, int]:
+        """ run ffprobe to get camera stream resolution """
+        ffprobe_cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-rtsp_transport", "tcp",
+            "-analyzeduration", "0",
+            "-probesize", "32",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "json",
+            url
+        ]
+        try:
+            logger.debug(
+                camera_name +
+                " running " +
+                " ".join(ffprobe_cmd) +
+                " with timeout " +
+                str(timeout)
+            )
+            output = subprocess.run(
+                ffprobe_cmd,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=timeout)
+            result = json.loads(output.stdout.decode().strip())
+            logger.debug("ffprobe output for " + url + " " + str(result))
+            return camera_name,Resolution(
+                width=result["streams"][0]["width"],
+                height=result["streams"][0]["height"])
+
+        except subprocess.TimeoutExpired:
+            logger.error("ffprobe timed out for " + url)
+            return camera_name, Resolution(width=0, height=0)
+        except Exception as e:
+            logger.error("Error occurred while running ffprobe for " + url + ": " + str(e))
+            return camera_name, Resolution(width=0, height=0)
 
 class FrameReader(Reader):
     """
@@ -90,7 +131,7 @@ class FrameReader(Reader):
         self.stop_event.clear()
         self.thread = Thread(target=self._run, daemon=True)
         self.thread.start()
-
+    
     def _run(self):
         """
         Autonomous lifecycle:
@@ -240,8 +281,12 @@ class FrameReader(Reader):
 
         try:
             if need_yolo_pipe:
-                logger.info(f"{self.camera.camera_info.name} starting dual-pipe FrameReader")
-
+                logger.info(self.camera.camera_info.name + " starting dual-pipe FrameReader")
+                logger.debug(
+                    self.camera.camera_info.name +
+                    " running " +
+                    " ".join(ffmpeg_cmd)
+                )
                 process = subprocess.Popen(
                     ffmpeg_cmd,
                     stdin=subprocess.DEVNULL,
@@ -260,7 +305,11 @@ class FrameReader(Reader):
                 self.yolo_pipe = os.fdopen(self.yolo_read_fd, "rb", buffering=0)
             else:
                 logger.info(f"{self.camera.camera_info.name} starting single-pipe FrameReader")
-
+                logger.debug(
+                    self.camera.camera_info.name +
+                    " running " +
+                    " ".join(ffmpeg_cmd)
+                )
                 process = subprocess.Popen(
                     ffmpeg_cmd,
                     stdin=subprocess.DEVNULL,
@@ -336,7 +385,9 @@ class FrameReader(Reader):
                 if fail_count >= 10:
                     logger.warning(
                         self.camera.camera_info.name +
-                        " full-res reader stalled, restarting after repeated timeouts")
+                        " full-res reader stalled" +
+                        "on first frame" if first_frame else "mid-stream" +
+                        ", restarting after repeated timeouts")
                     break
 
                 continue

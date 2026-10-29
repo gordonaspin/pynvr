@@ -37,8 +37,8 @@ class FileCleaner():
         """
         config = CleanerConfig(folder, filespec, age.total_seconds(), period.total_seconds())
         logger.debug(
-            f"adding cleaner folder={folder}, filespec={filespec}, age={age}, period={period}"
-            )
+            f"adding {Path(config.folder, config.filespec)}: age={config.age_seconds}, period={config.period_seconds}"
+        )
         with FileCleaner.lock:
             FileCleaner.cleaner_config[str(folder)+filespec] = config
         FileCleaner.min_sleep_seconds = min(
@@ -74,29 +74,37 @@ class FileCleaner():
 
                     cutoff = now - config.age_seconds
 
-                    for file in config.folder.rglob(config.filespec):
-                        # Skip protected or non-files
-                        if file in FileCleaner.do_not_delete_set or not file.is_file():
-                            continue
+                    try:
 
-                        try:
-                            stat_entry = file.stat()
-                        except Exception:
-                            continue  # File disappeared or became inaccessible
+                        for file in config.folder.rglob(config.filespec):
+                            # Skip protected or non-files
+                            if file in FileCleaner.do_not_delete_set or not file.is_file():
+                                continue
 
-                        # Skip files newer than cutoff
-                        if stat_entry.st_mtime >= cutoff:
-                            continue
+                            try:
+                                stat_entry = file.stat()
+                            except Exception:
+                                continue  # File disappeared or became inaccessible
 
-                        try:
-                            file.unlink()
-                            logger.debug(
-                                "file cleaner deleted: %s %s", 
-                                file, make_readable_ts(stat_entry.st_mtime)
-                            )
-                        except Exception:
-                            pass  # File may have disappeared or been locked
+                            # Skip files newer than cutoff
+                            if stat_entry.st_mtime >= cutoff:
+                                continue
 
-                    config.last_cleanup_time = now
+                            try:
+                                file.unlink()
+                                logger.debug(
+                                    str(Path(config.folder, config.filespec)) + " file cleaner deleted: %s %s", 
+                                    file, make_readable_ts(stat_entry.st_mtime)
+                                )
+                            except Exception:
+                                pass  # File may have disappeared or been locked
+
+                        config.last_cleanup_time = now
+
+                    except Exception as e:
+                        logger.error(
+                            "file cleaner error for folder=%s, filespec=%s: %s",
+                            config.folder, config.filespec, e
+                        )
 
             time.sleep(FileCleaner.min_sleep_seconds)

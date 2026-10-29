@@ -1,5 +1,4 @@
 """ utility classes """
-import subprocess
 import time
 from collections import defaultdict, deque
 from datetime import datetime
@@ -8,6 +7,8 @@ from math import sqrt
 
 import cv2
 import numpy as np
+
+from pynvr.config.config import Resolution
 
 logger = getLogger("pynvr")
 
@@ -74,28 +75,6 @@ def tags_to_str(tags: defaultdict[set]):
         color_str = "-".join(colors)
         parts.append(f"{object_str}-{color_str}")
     return "_".join(parts)
-
-def get_camera_resolution(url: str, timeout: int = 60) -> tuple[int, int]:
-    """ run ffprobe to get camera stream resolution """
-    ffprobe_cmd = [
-        f"timeout {timeout}s ffprobe",
-        "-v error",
-        "-rtsp_transport tcp",
-        "-analyzeduration 0",
-        "-probesize 32",
-        "-select_streams v:0",
-        "-show_entries stream=width,height",
-        "-of csv=p=0",
-        f"'{url}'"
-    ]
-    ffprobe_cmd_str = " ".join(ffprobe_cmd)
-    try:
-        output = subprocess.check_output(ffprobe_cmd_str, shell=True).decode().strip()
-        logger.debug(f"ffprobe output for {url}: {output}")
-        width, height = map(int, output.split(","))
-        return width, height
-    except Exception:
-        return 0, 0
 
 def detect_object_color(roi_bgr, is_night: bool):
     """

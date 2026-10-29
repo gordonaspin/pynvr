@@ -19,7 +19,6 @@ from pynvr.processor import FrameProcessor
 from pynvr.reader import Reader, FrameReader
 from pynvr.recorder import FrameRecorderFactory
 from pynvr.thread_safe import ThreadSafeList
-from pynvr.utils import get_camera_resolution
 from pynvr.api.types import RecordingEvent
 
 logger = getLogger("pynvr")
@@ -225,14 +224,15 @@ class NVR:
         """ return dictionary of camera resolutions """
         results = {}
 
-        def task(name, url):
-            w, h = get_camera_resolution(url, timeout=timeout)
-            return name, Resolution(width=w, height=h)
-
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = [
-                executor.submit(task, name, camera_config.url)
-                for name, camera_config in camera_configs.items() if camera_config.enabled
+                executor.submit(
+                    Reader.get_camera_resolution,
+                    camera_name,
+                    camera_config.url,
+                    timeout
+                    )
+                for camera_name, camera_config in camera_configs.items() if camera_config.enabled
             ]
 
             for f in as_completed(futures):

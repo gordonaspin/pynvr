@@ -170,8 +170,7 @@ class JSONFormatter(Formatter):
         """
         always_fields: dict[str, str] = {
             "timestamp": datetime.fromtimestamp(
-                record.created, tz=timezone.utc
-            ).isoformat(),
+                record.created).astimezone(),
             "level": record.levelname,
             "module": record.module,
             "funcName": record.funcName,
