@@ -8,8 +8,6 @@ from math import sqrt
 import cv2
 import numpy as np
 
-from pynvr.config.config import Resolution
-
 logger = getLogger("pynvr")
 
 class RollingAverage:

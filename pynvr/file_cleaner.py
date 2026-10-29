@@ -37,7 +37,8 @@ class FileCleaner():
         """
         config = CleanerConfig(folder, filespec, age.total_seconds(), period.total_seconds())
         logger.debug(
-            f"adding {Path(config.folder, config.filespec)}: age={config.age_seconds}, period={config.period_seconds}"
+            f"adding {Path(config.folder, config.filespec)}: " +
+            f"age={config.age_seconds}, period={config.period_seconds}"
         )
         with FileCleaner.lock:
             FileCleaner.cleaner_config[str(folder)+filespec] = config
@@ -93,7 +94,8 @@ class FileCleaner():
                             try:
                                 file.unlink()
                                 logger.debug(
-                                    str(Path(config.folder, config.filespec)) + " file cleaner deleted: %s %s", 
+                                    str(Path(config.folder, config.filespec)) +
+                                    " file cleaner deleted: %s %s",
                                     file, make_readable_ts(stat_entry.st_mtime)
                                 )
                             except Exception:

@@ -16,7 +16,7 @@ import json
 import sys
 import threading
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime
 from logging import (
     getLogger,
     Logger,

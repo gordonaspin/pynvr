@@ -40,7 +40,10 @@ class Reader:
         raise NotImplementedError()
 
     @classmethod
-    def get_camera_resolution(cls, camera_name: str, url: str, timeout: int = 60) -> tuple[int, int]:
+    def get_camera_resolution(
+        cls, camera_name: str,
+        url: str, timeout: int = 60
+        ) -> tuple[int, int]:
         """ run ffprobe to get camera stream resolution """
         ffprobe_cmd = [
             "ffprobe",
@@ -131,7 +134,7 @@ class FrameReader(Reader):
         self.stop_event.clear()
         self.thread = Thread(target=self._run, daemon=True)
         self.thread.start()
-    
+
     def _run(self):
         """
         Autonomous lifecycle:
